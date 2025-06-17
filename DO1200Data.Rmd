@@ -34,42 +34,33 @@ if(!dir.exists(project_path)) dir.create(project_path, recursive = TRUE)
 ### Objects from Cross object
 
 ```{r}
-cross <- readRDS(file.path(rd_dir, "cross_DO_diet_grcm39_v6.rds"))
-cross$pheno <- NULL
-cross$geno <- NULL
-```
-
-Pull out individual objects.
-
-```{r}
-for(x in names(cross)) {
-  savepath <- file.path(project_path, paste0(x, ".rds"))
-  print(savepath)
-  if(!file.exists(savepath)) {
-    saveRDS(cross[[x]], savepath)
+if(!file.exists(file.path(project_path, "covar.rds"))) {
+  cross <- readRDS(file.path(rd_dir, "cross_DO_diet_grcm39_v6.rds"))
+  cross$pheno <- NULL
+  cross$geno <- NULL
+  # Pull out individual objects.
+  for(x in names(cross)) {
+    savepath <- file.path(project_path, paste0(x, ".rds"))
+    print(savepath)
+    if(!file.exists(savepath)) {
+      saveRDS(cross[[x]], savepath)
+    }
   }
 }
 ```
 
 **Kinship is `kinship_loco` rather than `kinship`.**
 
-```{r}
-covar <- qtl2shiny:::read_project(project_info, "covar")
-K_chr <- qtl2shiny:::read_project(project_info, "kinship_loco")[chr_id]
-# Following used for mediation.
-peaks <- qtl2shiny:::read_project(project_info, "peaks")
-pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
-```
-
 ### Genes and SNP Variants
 
 ```{r}
-for(i in c("mouse_genes", "cc_variants"))
-system(paste0("cp ",
-              file.path(rd_dir, paste0(i, "_grcm39.sqlite")),
-              " ",
-              taxa_path))
-
+sql_files <- paste0(c("mouse_genes", "cc_variants"), "_grcm39.sqlite")
+if(!all(file.exists(file.path(taxa_path, sql_files)))) {
+  for(i in sql_files) {
+    message("copying ", i)
+    system(paste0("cp ", file.path(taxa_path, i), " ", taxa_path))
+  }
+}
 ```
 
 Need to construct `query_variants.rds` and `query_genes.rds`.
@@ -114,55 +105,87 @@ list.files(file.path(rd_dir, "probs_fst"), pattern = "*.rds")
 ```
 
 ```{r}
-system(paste0("cp -r ",
-              file.path(rd_dir, "probs_fst"),
-              " ",
-              project_path))
+if(!dir.exists(file.path(project_path, "genoprobs"))) {
+  system(paste0("cp -r ", file.path(rd_dir, "probs_fst"), " ", project_path))
+  system(paste0("mv ", file.path(project_path, "probs_fst"),
+                " ", file.path(project_path, "genoprob")))
+}
 ```
 
 ```{r}
-dim(readRDS(file.path(project_path, "probs_fst", "alleleprobs_fstindex.rds")))
+dim(readRDS(file.path(project_path, "genoprob", "alleleprobs_fstindex.rds")))
 ```
 
 ```{r}
-dim(readRDS(file.path(project_path, "probs_fst", "genoprobs_fstindex.rds")))
+dim(readRDS(file.path(project_path, "genoprob", "genoprobs_fstindex.rds")))
 ```
 
 ```{r}
-dim(readRDS(file.path(project_path, "probs_fst", "snpprobs_fstindex.rds")))
+dim(readRDS(file.path(project_path, "genoprob", "snpprobs_fstindex.rds")))
 ```
 
 Use `create_probs_query_func` from package 'qtl2pattern' to query genotype probabilities.
 Save it in RDS format for later use. Note that it requires a relative address to the project data provided by `project_path`.
 
 ```{r}
-query_probs <- qtl2pattern::create_probs_query_func(project_path)
-saveRDS(query_probs, file.path(project_path, "query_probs.rds"))
+if(file.exists(qname <- file.path(project_path, "query_probs.rds"))) {
+  warning(paste("probs query", qname,
+                "already exists and will not be overwritten"))
+} else {
+  query_probs <- qtl2pattern::create_probs_query_func(project_path)
+  saveRDS(query_probs, qname)
+}
 ```
 
-### Phenotypes and Covariates
+### Datasets and Phenotypes
 
 Covariates were already retrieved from the `cross` object.
 Phenotypes depend on `dataset`.
 
 ```{r}
-(datasets <- dir(file.path(rd_dir, "..", "files_for_cross_object"),
-                pattern = "pheno_.*"))
+datasets <- dir(file.path(rd_dir, "..", "files_for_cross_object"),
+                pattern = "pheno_.*")
+dataset_names <- stringr::str_replace(
+  stringr::str_remove(
+    stringr::str_remove(
+      stringr::str_remove(
+        stringr::str_remove(
+          stringr::str_remove(datasets, ".csv$"),
+          "_v[0-9]+$"),
+        "_(DO_diet_batch|DO_diet|combat)_(corrected|nonzero150_qqnorm|nonzero150_vsd)"),
+      "^pheno_"),
+    "(in_vivo_|_GTT_metatraits)"),
+  "((13C|2H))_metabolite", "metabolites_\\1")
+names(datasets) <- dataset_names
+datasets
 ```
+
+The following saves `datasets` as `pheno_xxx.rds` with `xxx` the
+`dataset_names`.
+This is OK for now, but may want to save as FST later.
+Also need to modify routine `pheno_read` or create another routine
+`read_dataset`
 
 ```{r}
-(pheno_path <- file.path(rd_dir, "..", "files_for_cross_object",
-                        datasets[1]))
+read_dataset <- function(project_info, dataset_name) {
+  project_path <- paste(rev(project_info), collapse = "/")
+  readRDS(file.path(project_path, paste0("pheno_", dataset_name, ".rds")))
+}
 ```
+
 
 ```{r}
-pheno_data <- read.csv(pheno_path)
-savepath <- file.path(project_path, "pheno_data.rds")
-print(savepath)
-saveRDS(pheno_data, savepath)
+if(!file.exists(file.path(project_path, "pheno_clinical.rds"))) {
+  for(i in dataset_names) {
+    savepath <- file.path(project_path, paste0("pheno_", i, ".rds"))
+    print(savepath)
+    pheno_path <- file.path(rd_dir, "..", "files_for_cross_object", datasets[i])
+    saveRDS(read.csv(pheno_path), savepath)
+  }
+}
 ```
 
-### Peaks by dataset
+### Peaks by Dataset and Covariates by Phenotype
 
 There are many peaks files.
 Need to decide if plan is to combine peaks files or have a bunch of
@@ -173,8 +196,24 @@ DO1200/peaks.rds
 ```
 
 ```{r}
-dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
+peaksets <- dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
     pattern = "^.*_all_.*additive_peaks.csv")
+peakset_names <- stringr::str_replace(
+  stringr::str_remove(
+    stringr::str_remove(peaksets, "^DO1200_"),
+    "_all_mice_additive_peaks.csv$"),
+  "splice_juncs", "psi")
+names(peaksets) <- peakset_names
+peaksets
+```
+
+```{r}
+peak_path <- file.path(project_path, "peaks")
+for(i in tools::file_path_sans_ext(dir(peak_path))) {
+  print(i)
+  saveRDS(read.csv(file.path(peak_path, paste0(i, ".csv"))),
+          file.path(peak_path, paste0(i, ".rds")))
+}
 ```
 
 ```{r}

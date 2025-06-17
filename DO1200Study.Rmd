@@ -29,39 +29,72 @@ for code to set up data.
 
 ```{r}
 project <- project_info$project
+project_path <- paste(rev(project_info), collapse = "/")
 window_Mbp <- 1
 ```
 
 ```{r}
-peaks <- qtl2shiny:::read_project(project_info, "peaks")
-max_peak <- which.max(peaks$qtl_lod)
-chr_id <- peaks[max_peak, "qtl_chr"]
-peak_Mbp <- peaks[max_peak, "qtl_pos"]
-pheno_name <- peaks[max_peak, "phenotype"]
+dataset_name <- "plasma_metabolites_13C"
 ```
 
 ```{r}
-pheno_data <- qtl2shiny:::read_project(project_info, "pheno_data")
+read_peakset <- function(project_info, 
+  dataset_name = c("clinical_traits", "liver_genes", "liver_isoforms", "liver_lipids",
+                   "liver_psi", "liver_splice_juncs", "plasma_metabolites",
+                   "plasma_metabolites", "plasma_metabolites_13C", "plasma_metabolites_2H"),
+  dietset = c("all", "HC", "HF", "male", "female"),
+  intset = c("additive", "diet_interactive", "sex_interactive")) {
+  
+  dataset_name <- match.arg(dataset_name)
+  if(dataset_name == "liver_psi") dataset_name <- "liver_splice_juncs"
+  if(dataset_name %in% c("plasma_metabolites_13C", "plasma_metabolites_2H"))
+    dataset_name <- "plasma_metabolites"
+  dietset <- match.arg(dietset)
+  intset <- match.arg(intset)
+  
+  peakset_file <- paste("DO1200", dataset_name, dietset, "mice", intset,
+                        "peaks.rds", sep = "_")
+
+  readRDS(file.path(project_path, "peaks", peakset_file)) |>
+    dplyr::select(-Which_mice)
+}
+peaks <- read_peakset(project_info, dataset_name)
+```
+
+```{r}
+(argpeak <- peaks |>
+  dplyr::filter(grepl("AUC_ARG", phenotype))) |>
+  dplyr::select(phenotype, qtl_lod, qtl_chr, qtl_pos)
+```
+
+```{r}
+read_dataset <- function(project_info, dataset_name) {
+  project_path <- paste(rev(project_info), collapse = "/")
+  readRDS(file.path(project_path, paste0("pheno_", dataset_name, ".rds")))
+}
+pheno_data <- read_dataset(project_info, "plasma_metabolites_13C")
+```
+
+```{r}
+names(pheno_data)[grep("AUC_ARG", names(pheno_data))]
+```
+
+```{r}
+pheno_name <- argpeak$phenotype
+chr_id <- as.character(argpeak$qtl_chr)
+peak_Mbp <- argpeak$qtl_pos
+addcovar <- argpeak$addcovar
+intcovar <- argpeak$intcovar
+window_Mbp <- 1
+```
+
+```{r}
 phe_mx <- pheno_data[,grep(pheno_name, colnames(pheno_data)), drop = FALSE]
 covar <- qtl2shiny:::read_project(project_info, "covar")
-cov_df <- covar
+cov_df <- model.matrix(formula(addcovar), covar)
 K_chr <- qtl2shiny:::read_project(project_info, "kinship_local")[chr_id]
 # Following used for mediation.
 pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
-```
-
-**Peaks file has `addcovar` and `intcovar` by trait.**
-
-```{r}
-peaks |>
-  dplyr::filter(phenotype == pheno_name) |>
-  dplyr::select(phenotype, qtl_lod, qtl_chr, qtl_pos, addcovar, intcovar)
-```
-
-```{r}
-peaks |>
-  dplyr::filter(phenotype == pheno_name, qtl_chr == chr_id) |>
-  dplyr::select(addcovar, intcovar)
 ```
 
 ## Haplotype Server

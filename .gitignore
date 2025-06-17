@@ -50,5 +50,7 @@ po/*~
 rsconnect/
 
 *.html
+.DS_Store
 
 qtl2shinyData/
+doc/
