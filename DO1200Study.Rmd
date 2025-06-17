@@ -1,0 +1,90 @@
+---
+title: "DO1200"
+author: "Brian Yandell"
+date: "2025-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is a reframing of DO1200 data to use with 
+[qtl2shiny](https://github.com/byandell-sysgen/qtl2shiny).
+See
+[Recla.Rmd](Recla.Rmd)
+for prototype analysis with Recla et al. dataset.
+See
+[DO1200Data.Rmd](DO1200Data.Rmd)
+for code to set up data.
+
+```{r}
+(project_info <- data.frame(project = "DO1200",
+                           taxa = "CCmouse",
+                           directory = "qtl2shinyData"))
+```
+
+## Key Summary Information
+
+
+```{r}
+project <- project_info$project
+window_Mbp <- 1
+```
+
+```{r}
+peaks <- qtl2shiny:::read_project(project_info, "peaks")
+max_peak <- which.max(peaks$qtl_lod)
+chr_id <- peaks[max_peak, "qtl_chr"]
+peak_Mbp <- peaks[max_peak, "qtl_pos"]
+pheno_name <- peaks[max_peak, "phenotype"]
+```
+
+```{r}
+pheno_data <- qtl2shiny:::read_project(project_info, "pheno_data")
+phe_mx <- pheno_data[,grep(pheno_name, colnames(pheno_data)), drop = FALSE]
+covar <- qtl2shiny:::read_project(project_info, "covar")
+cov_df <- covar
+K_chr <- qtl2shiny:::read_project(project_info, "kinship_local")[chr_id]
+# Following used for mediation.
+pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
+```
+
+**Peaks file has `addcovar` and `intcovar` by trait.**
+
+```{r}
+peaks |>
+  dplyr::filter(phenotype == pheno_name) |>
+  dplyr::select(phenotype, qtl_lod, qtl_chr, qtl_pos, addcovar, intcovar)
+```
+
+```{r}
+peaks |>
+  dplyr::filter(phenotype == pheno_name, qtl_chr == chr_id) |>
+  dplyr::select(addcovar, intcovar)
+```
+
+## Haplotype Server
+
+```{r}
+sex_type <- "A"
+```
+
+```{r}
+start_val <- peak_Mbp - window_Mbp
+end_val <- peak_Mbp + window_Mbp
+# Define query_probs function
+query_probs <- qtl2shiny:::read_query_rds(project_info, "query_probs.rds")
+# Note probs object keeps map with it
+probs_obj <- query_probs(chr_id, start_val, end_val)
+```
+
+### Small region scan
+
+This needs to be redone, walking through `qtl2mediate::scan1covar`.
+Probably a new function `qtl2shiny::scan1covar`.
+
+```{r}
+scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, probs_obj$probs, K_chr,
+                                    analyses_df, sex_type = sex_type)
+```

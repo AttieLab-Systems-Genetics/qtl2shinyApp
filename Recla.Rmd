@@ -1,0 +1,363 @@
+---
+title: "Prepare qtl2 data for qtl2shiny"
+author: "Brian S. Yandell"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output: html_document
+params:
+  root_directory: "."
+  shiny_directory: "qtl2shinyData"
+  project: "Recla"
+  taxa: "CCmouse"
+  dontrun: FALSE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This documents how to use the `Recla` project data from <https://github.com/rqtl/qtl2data> with tools organized in [R/qtl2shiny](https://github.com/byandell/qtl2shiny).
+See
+[DeveloperGuide.Rmd](https://github.com/byandell-sysgen/qtl2shiny/blob/master/vignettes/DeveloperGuide.Rmd)
+for creation of files.
+
+The philosophy is to look in great depth at a small genome region
+using real-time analyses and visualizations.
+
+Code below uses internal functions `qtl2shiny:::*()`
+that are helpers that keep the shiny code itself as simple as possible.
+These can be examined to understand more of the nitty gritty.
+
+The `project_info` data frame contains control information about each project (see [R/qtl2shiny](https://github.com/byandell/qtl2shiny)).
+
+```{r eval=FALSE, echo = FALSE}
+# For use in interactive mode for testing.
+if(!exists("params") & interactive()) {
+  params <- list(
+    root_directory = "../../qtl2shinyDemo",
+    shiny_directory = "qtl2shinyData",
+    project = "Recla",
+    taxa = "CCmouse",
+    dontrun = FALSE)
+}
+```
+
+```{r}
+(project_info <- data.frame(project = params$project,
+                           taxa = params$taxa,
+                           directory = params$shiny_directory))
+```
+
+The processed data resides in the following directory:
+
+```{r}
+dir(project_info$directory)
+```
+
+If `dontrun` is `r TRUE` then just show remaining code without running.
+
+```{r}
+if(params$dontrun) {
+  warning("Showing rest of code without running")
+  knitr::opts_chunk$set(eval = FALSE, echo = TRUE)
+}
+```
+
+## Data setup
+
+This selects a project, phenotype and chromosome position for
+demonstration analysis.
+Steps are from the
+[setupServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/setupServer.R).
+
+```{r}
+project <- project_info$project
+chr_id <- "11"
+peak_Mbp <- 97
+window_Mbp <- 1
+pheno_name <- "LD_distance_light"
+```
+
+## Dashboard Setup
+
+The dashboard uses the
+[dashServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/dashServer.R)
+to set up key data objects that are used throughout the app.
+These are of two kinds: organizing tables and dataset.
+
+Organizing tables have metadata that indicate how to use datasets.
+These are legacy formats that need to be updated.
+
+```{r}
+analyses_tbl <- qtl2shiny:::read_project(project_info, "analyses")
+analyses_df <- dplyr::filter(analyses_tbl, .data$pheno %in% pheno_name)
+allele_info <- qtl2shiny:::read_project(project_info, "allele_info")
+# Following used for mediation.
+pheno_data <- qtl2shiny:::pheno_read(project_info, analyses_tbl)
+```
+
+Datasets are versions of data.
+These will mostly be directly useable **except** that some names
+may have changed over the years.
+
+```{r}
+phe_mx <- qtl2shiny:::pheno_read(project_info, analyses_df)
+covar <- qtl2shiny:::read_project(project_info, "covar")
+cov_df <- qtl2mediate::get_covar(covar, analyses_df)
+K_chr <- qtl2shiny:::read_project(project_info, "kinship")[chr_id]
+# Following used for mediation.
+peaks <- qtl2shiny:::read_project(project_info, "peaks")
+pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
+```
+
+## Haplotype Server
+
+The
+[haploServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/haploServer.R)
+organizes the analyis using that allele haplotypes and the SNPs.
+It can be used with different sex types, but only additive `"A"`
+is illustrated here.
+
+```{r}
+sex_type <- "A"
+```
+
+The 
+[probsServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/probsServer.R)
+has three separate servers, for the 8 alleles (`probsServer`),
+the 3 levels of SNPs (`snpProbsServer`),
+and the 36 allele pairs (`pairProbsServer`).
+Each of these has an API function `query_*()` to access
+probability array by chromosome and `MBp` window.
+
+```{r}
+start_val <- peak_Mbp - window_Mbp
+end_val <- peak_Mbp + window_Mbp
+# Define query_probs function
+query_probs <- qtl2shiny:::read_query_rds(project_info, "query_probs.rds")
+# Note probs object keeps map with it
+probs_obj <- query_probs(chr_id, start_val, end_val)
+```
+
+### Small Region Genome Scan
+
+The
+[scanCoefServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/scanCoefServer.R)
+performs the scans.
+For convenience and simplified reuse of key scan and coefficient objects,
+we wrap
+[qtl2::scan1](https://kbroman.org/qtl2/assets/vignettes/user_guide.html)
+within
+[qtl2mediate::scan1covar](https://github.com/byandell-sysgen/qtl2mediate/blob/master/R/scan1covar.R).
+
+
+```{r}
+scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, probs_obj$probs, K_chr,
+                                    analyses_df, sex_type = sex_type)
+```
+
+```{r}
+scan_window <- c(start_val, end_val)
+qtl2shiny:::plot_scan(scan_obj, probs_obj$map, seq(ncol(scan_obj)), chr_id, 
+                      scan_window, phe_mx)
+```
+
+```{r}
+blups <- FALSE
+eff_obj <- qtl2shiny:::scan1_effect(probs_obj$probs, phe_mx, K_chr, cov_df,
+                                    sex_type, blups)
+qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
+                 addlod = TRUE, allele_info)
+```
+
+### SNP Association and SDP Plots
+
+`snpSetupServer`
+
+```{r}
+query_snp_probs <- qtl2shiny:::read_query_rds(project_info, "query_probs.rds")
+snpprobs_obj <- query_probs(chr_id, peak_Mbp - window_Mbp,
+                            peak_Mbp + window_Mbp, allele = FALSE)
+      
+      # define the query_variants function
+query_variants <- qtl2shiny:::read_query_rds(project_info, "query_variants.rds")
+snpinfo <- query_variants(chr_id, peak_Mbp - window_Mbp,
+                          peak_Mbp + window_Mbp)
+snpprobs_obj <- qtl2mediate::get_snpprobs(chr_id, peak_Mbp, window_Mbp,
+  pheno_name, probs_obj$probs, probs_obj$map, snpinfo)
+```
+
+```{r}
+snp_action <- "basic"
+snpprobs_act <- qtl2pattern::snpprob_collapse(snpprobs_obj$snpprobs, snp_action)
+snp_scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, snpprobs_act, K_chr,
+                                analyses_df, sex_type = sex_type)
+```
+
+```{r}
+minLOD <- max(3, round(max(unclass(snp_scan_obj)), 1) - 1.5)
+drop_hilit <- max(unclass(snp_scan_obj)) - minLOD
+top_snps_tbl <- qtl2pattern::top_snps_pattern(snp_scan_obj,
+  snpprobs_obj$snpinfo, drop_hilit)
+```
+
+Show max LOD for unique consequences.
+
+```{r}
+knitr::kable(
+  dplyr::ungroup(
+    dplyr::filter(
+      dplyr::group_by(
+        dplyr::select(
+          top_snps_tbl,
+#         dplyr::mutate(top_snps_tbl, consequence = abbreviate(consequence, 45)),
+          snp_id, pos, sdp, lod, consequence),
+        consequence),
+      lod == max(lod), !is.na(consequence))))
+```
+
+```{r}
+patterns <- 
+  dplyr::arrange(
+    dplyr::mutate(
+      dplyr::filter(
+        summary(top_snps_tbl), 
+        .data$max_lod >= 3), 
+      contrast = snp_action), 
+    dplyr::desc(.data$max_lod))
+```
+
+`snpSetupServer`: `snpGeneServer`: `snpPlotServer`
+
+```{r}
+qtl2shiny:::top_snp_asso(snp_scan_obj, snpprobs_obj$snpinfo,
+  scan_window, snp_action, minLOD = minLOD)
+```
+
+`snpSetupServer`: `snpPatternServer`
+
+```{r}
+dropHilit <- max(0, max(unclass(snp_scan_obj)) - minLOD)
+qtl2shiny:::top_pat_plot(pheno_name, snp_scan_obj, chr_id, snpprobs_obj$snpinfo, 
+  scan_window, drop_hilit = dropHilit, facet = "pattern",
+  snp_action = snp_action)
+```
+
+
+`mediateServer`
+
+```{r}
+pos_Mbp <- peak_Mbp
+qtls <- 1 # 1 or 2
+other <- FALSE
+med_plot_type <- "pos_LR"
+local <- FALSE
+signif <- TRUE
+```
+
+Assume comediator rather than expression.
+
+```{r}
+comed_ls <- qtl2mediate::comediator_region(pheno_name, chr_id, scan_window,
+  covar, analyses_tbl, peaks, qtls, pmap_obj, pheno_data)
+med_ls <- qtl2mediate::comediator_type(comed_ls, peaks, pheno_name, other)
+```
+
+```{r}
+phe1_mx <- if(pheno_name %in% colnames(phe_mx)) {
+    phe_mx[, pheno_name, drop = FALSE]
+  } else {
+    NULL
+  }
+mediate_obj <- qtl2mediate::mediation_test_qtl2(
+          target = phe1_mx,
+          mediator = med_ls[[1]],
+          annotation = med_ls[[2]],
+          covar_tar = cov_df,
+          covar_med = med_ls$covar,
+          genoprobs = probs_obj$probs,
+          map = probs_obj$map,
+          chr = chr_id,
+          pos = pos_Mbp,
+          kinship = K_chr)
+```
+
+```{r}
+ggplot2::autoplot(mediate_obj, med_plot_type,
+            local_only = local, 
+            significant = signif) +
+            ggplot2::geom_point(size = 4)
+```
+
+`triadServer`
+
+```{r}
+sdps <- unique(dplyr::filter(patterns, .data$pheno == pheno_name)$sdp)
+haplos <- allele_info$code
+choices_pattern <- qtl2pattern::sdp_to_pattern(sdps, haplos)
+pattern <- choices_pattern[1]
+sdp <- sdps[match(pattern, choices_pattern, nomatch = 1)]
+medID <- "symbol"
+choices_triad <- levels(shiny::req(mediate_obj)$best$triad)
+triad <- choices_triad[1] 
+choices_med <- dplyr::filter(mediate_obj$best, .data$triad == triad)$id
+med_name <- choices_med[1]
+```
+
+```{r}
+scat_dat <- qtl2mediate::mediation_triad_qtl2(
+      target = phe_mx,
+      mediator = med_ls[[1]][, med_name, drop = FALSE],
+      annotation = med_ls[[2]],
+      covar_tar = cov_df,
+      covar_med = med_ls$covar,
+      genoprobs = probs_obj$probs,
+      map = probs_obj$map,
+      chr = chr_id,
+      pos = pos_Mbp,
+      kinship = K_chr[[1]],
+      sdp = sdp)
+```
+
+```{r}
+peak_mar <- qtl2::find_marker(probs_obj$map, chr_id, pos_Mbp)
+scat_plot <- "by_mediator"
+```
+
+** For some reason, the text is not showing on the
+`qtl2shiny` rendition anymore. **
+
+```{r}
+ggplot2::autoplot(scat_dat, type = scat_plot,
+             dname = peak_mar,
+             mname = med_name,
+             tname = colnames(phe_mx),
+             fitlines = "sdp",
+             centerline = NULL)
+```
+
+```{r}
+ggplot2::autoplot(scat_dat, type = scat_plot,
+             dname = peak_mar,
+             mname = med_name,
+             tname = colnames(phe_mx),
+             fitlines = "sdp-parallel",
+             centerline = NULL)
+```
+
+```{r}
+ggplot2::autoplot(scat_dat, type = scat_plot,
+             dname = peak_mar,
+             mname = med_name,
+             tname = colnames(phe_mx),
+             fitlines = "parallel",
+             centerline = NULL)
+```
+
+```{r}
+ggplot2::autoplot(scat_dat, type = scat_plot,
+             dname = peak_mar,
+             mname = med_name,
+             tname = colnames(phe_mx),
+             fitlines = "driver",
+             centerline = NULL)
+```
