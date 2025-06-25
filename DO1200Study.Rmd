@@ -472,7 +472,7 @@ signif <- TRUE
 
 Assume comediator rather than expression.
 
-** Need to redo without `analyses_tbl` **
+** The `pheno_region` is not working properly. **
 
 ```{r}
 comediator_region <- function(pheno_name, chr_id, scan_window, 
@@ -496,6 +496,8 @@ comediator_region <- function(pheno_name, chr_id, scan_window,
 }
 ```
 
+** remove analyses mention **
+
 ```{r}
 pheno_region <- function(chr_id, scan_window, covar, map, 
                          peaks, pheno_data,
@@ -516,35 +518,32 @@ pheno_region <- function(chr_id, scan_window, covar, map,
   annot <- 
     dplyr::rename(
       dplyr::inner_join(
-        dplyr::left_join(
-          peaks, 
-          analyses, 
-          by = bycols),
+        peaks, 
         dplyr::ungroup(
           dplyr::summarize(
             dplyr::group_by(
               peaks, 
-              .data$pheno),
+              .data$phenotype),
             qtl_ct = dplyr::n(),
-            info = paste0(.data$chr, "@",
-                          round(.data$pos), ":",
-                          round(.data$lod), collapse = ","))),
-        by = "pheno"),
-      id = .data$pheno)
+            info = paste0(.data$qtl_chr, "@",
+                          round(.data$qtl_pos), ":",
+                          round(.data$qtl_lod), collapse = ","))),
+        by = "phenotype"),
+      id = .data$phenotype)
 
   # Used in 'qtl2shiny'.
   if("pheno_type" %in% names(annot)) {
     annot <- dplyr::rename(
       annot,
-      biotype = .data$pheno_type)
+      biotype = .data$phenotype)
   }
   
   # Reduce to phenotypes with peaks in region.
   annot <- dplyr::filter(
     annot, 
-    .data$chr == chr_id,
-    .data$pos >= start_val,
-    .data$pos <= end_val)
+    .data$qtl_chr == chr_id,
+    .data$qtl_pos >= start_val,
+    .data$qtl_pos <= end_val)
   
   # This limits to traits that reside locally. Only make sense for expression data.
   annot$local <- FALSE
@@ -577,8 +576,8 @@ pheno_region <- function(chr_id, scan_window, covar, map,
 
 
 ```{r}
-comed_ls <- qtl2mediate::comediator_region(pheno_name, chr_id, scan_window,
-  covar, analyses_tbl, peaks, qtls, pmap_obj, pheno_data)
+comed_ls <- comediator_region(pheno_name, chr_id, scan_window,
+  covar, peaks, qtls, pmap_obj, pheno_data)
 med_ls <- qtl2mediate::comediator_type(comed_ls, peaks, pheno_name, other)
 ```
 
