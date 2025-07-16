@@ -105,10 +105,8 @@ list.files(file.path(rd_dir, "probs_fst"), pattern = "*.rds")
 ```
 
 ```{r}
-if(!dir.exists(file.path(project_path, "genoprobs"))) {
+if(!dir.exists(file.path(project_path, "probs_fst"))) {
   system(paste0("cp -r ", file.path(rd_dir, "probs_fst"), " ", project_path))
-  system(paste0("mv ", file.path(project_path, "probs_fst"),
-                " ", file.path(project_path, "genoprob")))
 }
 ```
 
@@ -132,7 +130,8 @@ if(file.exists(qname <- file.path(project_path, "query_probs.rds"))) {
   warning(paste("probs query", qname,
                 "already exists and will not be overwritten"))
 } else {
-  query_probs <- qtl2pattern::create_probs_query_func(project_path)
+  query_probs <- qtl2pattern::create_probs_query_func(
+    project_path, probdir = "probs_fst")
   saveRDS(query_probs, qname)
 }
 ```

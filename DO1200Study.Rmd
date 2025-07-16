@@ -18,6 +18,14 @@ See
 [DO1200Data.Rmd](DO1200Data.Rmd)
 for code to set up data.
 
+This is still very detailed. Want to decide on a few plots
+and streamline code. Goal:
+
+- scan using allele probabilities and show LOD and BLUE plot
+- SNP association to find best SNP and show pattern plot
+- use best SNP as covariate (not done yet)
+- mediate using mRNA data (not done yet)
+
 ```{r}
 (project_info <- data.frame(project = "DO1200",
                            taxa = "CCmouse",
@@ -201,17 +209,28 @@ qtl2shiny:::plot_eff(pheno_names[1], eff_arg1, probs_obj$map, scan_arg, scan_win
 ```
 ### SNP Association and SDP Plots
 
+Note that the `query_probs()` function is set up to read genotype probabilities
+for alleles and allele pairs (depending of option `allele`).
+In future, this could read the `snpprobs_fstindex.rds` instead of going through
+the process of recomputing from allele pairs as is done below.
+
+Goal once we have SNP for max association, is to add the SNP genoprobs for that
+SNP as additive covariate. May need to modify `scan1covar()` above to enable
+that, say by adding an argument.
+
 `snpSetupServer`
 
+**NOTE change of snpprobs_obj below to use precomputed values. Change call below.**
+
 ```{r}
-query_snp_probs <- qtl2shiny:::read_query_rds(project_info, "query_probs.rds")
 snpprobs_obj <- query_probs(chr_id, peak_Mbp - window_Mbp,
-                            peak_Mbp + window_Mbp, allele = FALSE)
+                            peak_Mbp + window_Mbp, allele = "snp")
       
       # define the query_variants function
 query_variants <- qtl2shiny:::read_query_rds(project_info, "query_variants.rds")
 snpinfo <- query_variants(chr_id, peak_Mbp - window_Mbp,
                           peak_Mbp + window_Mbp)
+## **Need to change this**
 snpprobs_obj <- qtl2mediate::get_snpprobs(chr_id, peak_Mbp, window_Mbp,
   pheno_name, probs_obj$probs, probs_obj$map, snpinfo)
 ```
@@ -245,14 +264,14 @@ knitr::kable(
 ```
 
 ```{r}
-patterns <- 
+(patterns <- 
   dplyr::arrange(
     dplyr::mutate(
       dplyr::filter(
         summary(top_snps_tbl), 
         .data$max_lod >= 3), 
       contrast = snp_action), 
-    dplyr::desc(.data$max_lod))
+    dplyr::desc(.data$max_lod)))
 ```
 
 #### ARG1
