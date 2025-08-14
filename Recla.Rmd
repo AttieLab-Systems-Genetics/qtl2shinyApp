@@ -88,11 +88,9 @@ Organizing tables have metadata that indicate how to use datasets.
 These are legacy formats that need to be updated.
 
 ```{r}
-analyses_tbl <- qtl2shiny:::read_project(project_info, "analyses")
-analyses_df <- dplyr::filter(analyses_tbl, .data$pheno %in% pheno_name)
 allele_info <- qtl2shiny:::read_project(project_info, "allele_info")
 # Following used for mediation.
-pheno_data <- qtl2shiny:::pheno_read(project_info, analyses_tbl)
+pheno_mx <- qtl2shiny:::read_project(project_info, "pheno", class = "group")
 ```
 
 Datasets are versions of data.
@@ -100,22 +98,45 @@ These will mostly be directly useable **except** that some names
 may have changed over the years.
 
 ```{r}
-phe_mx <- qtl2shiny:::pheno_read(project_info, analyses_df)
-covar <- qtl2shiny:::read_project(project_info, "covar")
-cov_df <- qtl2mediate::get_covar(covar, analyses_df)
+covar_df <- qtl2shiny:::read_project(project_info, "covar")
 K_chr <- qtl2shiny:::read_project(project_info, "kinship")[chr_id]
 # Following used for mediation.
-peaks <- qtl2shiny:::read_project(project_info, "peaks")
+peaks_df <- qtl2shiny:::read_project(project_info, "peaks", class = "group")
 pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
+```
+
+## Hotspot Server
+
+[hotspotApp](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/hotspotApp.R)
+
+```{r}
+phenotype_class <- "group"
+minLOD <- 5.5
+```
+
+Create hotspot object
+
+```{r}
+hotspot_obj <- qtl2shiny::hotspot(pmap_obj, peaks_df, window_Mbp, minLOD)
+```
+
+
+```{r}
+qtl2shiny:::plot_hot(hotspot_obj, phenotype_class, window_Mbp)
+```
+
+```{r}
+summary(hotspot_obj)
 ```
 
 ## Haplotype Server
 
 The
 [haploServer](https://github.com/byandell-sysgen/qtl2shiny/blob/master/R/haploServer.R)
-organizes the analyis using that allele haplotypes and the SNPs.
+organizes the analysis using allele haplotypes and SNPs.
 It can be used with different sex types, but only additive `"A"`
-is illustrated here.
+is illustrated here. This is being dropped in favor of using
+`addcovar` and `intcovar`.
 
 ```{r}
 sex_type <- "A"
@@ -147,23 +168,25 @@ For convenience and simplified reuse of key scan and coefficient objects,
 we wrap
 [qtl2::scan1](https://kbroman.org/qtl2/assets/vignettes/user_guide.html)
 within
-[qtl2mediate::scan1covar](https://github.com/byandell-sysgen/qtl2mediate/blob/master/R/scan1covar.R).
+[scan1covar](https://github.com/byandell-sysgen/qtl2shiny/blob/refactor/R/scan1covar.R).
 
 
 ```{r}
-scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, probs_obj$probs, K_chr,
-                                    analyses_df, sex_type = sex_type)
+scan_obj <- qtl2shiny::scan1covar(pheno_mx[, pheno_name, drop = FALSE],
+                                  covar_df, probs_obj$probs, K_chr,
+                                  peaks_df)
 ```
 
 ```{r}
 scan_window <- c(start_val, end_val)
 qtl2shiny:::plot_scan(scan_obj, probs_obj$map, seq(ncol(scan_obj)), chr_id, 
-                      scan_window, phe_mx)
+                      scan_window, pheno_mx) +
+  ggplot2::theme(legend.position = "none")
 ```
 
 ```{r}
 blups <- FALSE
-eff_obj <- qtl2shiny:::scan1_effect(probs_obj$probs, phe_mx, K_chr, cov_df,
+eff_obj <- qtl2shiny:::scan1_effect(probs_obj$probs, pheno_mx, K_chr, covar_df,
                                     sex_type, blups)
 qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
                  addlod = TRUE, allele_info)
@@ -189,7 +212,7 @@ snpprobs_obj <- qtl2mediate::get_snpprobs(chr_id, peak_Mbp, window_Mbp,
 ```{r}
 snp_action <- "basic"
 snpprobs_act <- qtl2pattern::snpprob_collapse(snpprobs_obj$snpprobs, snp_action)
-snp_scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, snpprobs_act, K_chr,
+snp_scan_obj <- qtl2mediate::scan1covar(pheno_mx, covar_df, snpprobs_act, K_chr,
                                 analyses_df, sex_type = sex_type)
 ```
 
@@ -258,13 +281,13 @@ Assume comediator rather than expression.
 
 ```{r}
 comed_ls <- qtl2mediate::comediator_region(pheno_name, chr_id, scan_window,
-  covar, analyses_tbl, peaks, qtls, pmap_obj, pheno_data)
-med_ls <- qtl2mediate::comediator_type(comed_ls, peaks, pheno_name, other)
+  covar_df, analyses_tbl, peaks_df, qtls, pmap_obj, pheno_mx)
+med_ls <- qtl2mediate::comediator_type(comed_ls, peaks_df, pheno_name, other)
 ```
 
 ```{r}
-phe1_mx <- if(pheno_name %in% colnames(phe_mx)) {
-    phe_mx[, pheno_name, drop = FALSE]
+phe1_mx <- if(pheno_name %in% colnames(pheno_mx)) {
+    pheno_mx[, pheno_name, drop = FALSE]
   } else {
     NULL
   }
@@ -272,7 +295,7 @@ mediate_obj <- qtl2mediate::mediation_test_qtl2(
           target = phe1_mx,
           mediator = med_ls[[1]],
           annotation = med_ls[[2]],
-          covar_tar = cov_df,
+          covar_tar = covar_df,
           covar_med = med_ls$covar,
           genoprobs = probs_obj$probs,
           map = probs_obj$map,
@@ -305,10 +328,10 @@ med_name <- choices_med[1]
 
 ```{r}
 scat_dat <- qtl2mediate::mediation_triad_qtl2(
-      target = phe_mx,
+      target = pheno_mx,
       mediator = med_ls[[1]][, med_name, drop = FALSE],
       annotation = med_ls[[2]],
-      covar_tar = cov_df,
+      covar_tar = covar_df,
       covar_med = med_ls$covar,
       genoprobs = probs_obj$probs,
       map = probs_obj$map,
@@ -330,7 +353,7 @@ scat_plot <- "by_mediator"
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "sdp",
              centerline = NULL)
 ```
@@ -339,7 +362,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "sdp-parallel",
              centerline = NULL)
 ```
@@ -348,7 +371,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "parallel",
              centerline = NULL)
 ```
@@ -357,7 +380,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "driver",
              centerline = NULL)
 ```

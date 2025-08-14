@@ -11,36 +11,133 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 rd_dir <- "/Volumes/mkeller3/General/main_directory/mapping_data"
-dir(rd_dir)
 ```
 
+This document concerns local data structures for the
+`DO1200` data project conducted in the
+[AttieLab Systems Genetics](https://github.com/AttieLab-Systems-Genetics)
+organization.
+
+## DO1200 Managed Data and Code
+
+The data are maintained on the 
+[UW-Madison ResearchDrive](https://it.wisc.edu/services/researchdrive/)
+in the `mkeller3` partition in `General/main_directory`,
+primarily in subfolders
+
+- `mapping_data/` data objects used for analysis (mapping)
+- `files_for_cross_object/` data used to construct cross object
+- `annotated_peak_summaries/` peak summaries by subject set and covariate model
+
+The following code would load the `cross_obj` (2.7Gb) and
+one of the peaks dataframe files (`peak_clinical_df`)
+and one of the phenotype files.
+Note that the peaks and phenotype file names have extra information
+about project and versions.
+
+```{r eval=FALSE}
+cross_obj <- readRDS(file.path(rd_dir, "cross_DO_diet_grcm39_v6.rds"))
+class <- "clinical_traits"
+peak_clinical_df <- read.csv(file.path(rd_dir, "..", "annotated_peak_summaries",
+  paste0("DO1200_", class, "_all_mice_additive_peaks.csv")))
+pheno_clinical_df <- read.csv(file.path(rd_dir, "..", "files_for_cross_object",
+  paste0("pheno_", "in_vivo_", class, "_v3.csv")))
+```
+
+The data are maintained with master QTL mapping scripts on GitHub at
+[AttieLab-Systems-Genetics/qtl_mapping/scripts/latest](https://github.com/AttieLab-Systems-Genetics/qtl_mapping/tree/main/scripts/latest).
+Note in particular the scan scripts
+
+- [QTL_scan_wrapper.R](https://github.com/AttieLab-Systems-Genetics/qtl_mapping/blob/main/scripts/latest/QTL_scan_wrapper.R)
+- [QTL_scan_function.R](https://github.com/AttieLab-Systems-Genetics/qtl_mapping/blob/main/scripts/latest/QTL_scan_function.R)
+
+The wrapper sources the script
+[rankz.R](https://github.com/AttieLab-Systems-Genetics/qtl_mapping/blob/main/scripts/latest/rankz.R)
+located in the same folder for the data transformation.
+
+## DO1200 Preparation for qtl2shiny
+
+The `DO1200` data are prepared for use with the
+[qtl2shiny](https://github.com/byandell-sysgen/qtl2shiny)
+app.
+The intent is to largely maintain data in the structure as the above
+managed data, with adjustments for rapid access and use.
+Some processing is done, for instance to put data in RDS files
+for quicker access and to combine disparate phenotype files.
+
+CSV files were transferred by hand, read and saved as RDS.
+For instance, peaks came from
+`file.path(rd_dir, "..", "annotated_peak_summaries")`
+as CSV files, and landed in 
+`qtl2shinyData/CCmouse/DO1200/peaks`
+as RDS files.
+
+Key sections:
+
+- [Project and CC Mouse Data](#project-and-cc-mouse-data)
+  - [Miscellaneous Items from Cross Object](#miscellaneous-items-from-cross-object)
+- [DO1200 Genotype Data](#do1200-genotype-data)
+  - [Kinship](#kinship)
+  - [Genes and SNP Variants](#genes-and-snp-variants)
+  - [Genotype Probabilities](#genotype-probabilities)
+- [DO1200 Peak Data](#do1200-peak-data)
+- [DO1200 Phenotype Data](#do1200-phenotype-data)
+  - [DO1200 Covariate Data](#do1200-covariate-data)
+  - [DO1200 Phenotypes by Class](#do1200-phenotypes-by-class)
+  
+<hr>
+
+## Project and CC Mouse Data
+
+The project is identified at the top level in a CSV file
+`projects.csv`
+
+```
+project,taxa,directory
+Recla,CCmouse,qtl2shinyData
+DO1200,CCmouse,qtl2shinyData
+```
+
+Each row corresponds to a project.
+The `project` is located within a `taxa`, which is located within the
+overall `qtl2shinyData` folder.
+For ease, we define the project info below.
+
 ```{r}
-(project_info <- data.frame(project = "DO1200",
+(project_df <- data.frame(project = "DO1200",
                            taxa = "CCmouse",
                            directory = "qtl2shinyData"))
 ```
 
 ```{r}
-taxa_path <- file.path(project_info$directory, project_info$taxa)
-(project_path <- file.path(taxa_path, project_info$project))
+taxa_path <- file.path(project_df$directory, project_df$taxa)
+dir(taxa_path)
 ```
 
 ```{r}
+(project_path <- file.path(taxa_path, project_df$project))
 if(!dir.exists(project_path)) dir.create(project_path, recursive = TRUE)
 ```
 
-## Copy Key data for Clinical Example
-
-### Objects from Cross object
-
 ```{r}
+dir(project_path)
+```
+
+### Miscellaneous Items from Cross Object
+
+The cross object is huge and takes a long time to load. 
+Most of its elements can be copied from the ResearchDrive.
+However, it was convenient to (one time) save the various
+miscellaneous objects into a folder.
+
+```{r eval=FALSE}
 if(!file.exists(file.path(project_path, "covar.rds"))) {
   cross <- readRDS(file.path(rd_dir, "cross_DO_diet_grcm39_v6.rds"))
   cross$pheno <- NULL
   cross$geno <- NULL
   # Pull out individual objects.
   for(x in names(cross)) {
-    savepath <- file.path(project_path, paste0(x, ".rds"))
+    savepath <- file.path(project_path, "misc", paste0(x, ".rds"))
     print(savepath)
     if(!file.exists(savepath)) {
       saveRDS(cross[[x]], savepath)
@@ -49,16 +146,57 @@ if(!file.exists(file.path(project_path, "covar.rds"))) {
 }
 ```
 
-**Kinship is `kinship_loco` rather than `kinship`.**
+```{r eval=FALSE}
+sum_na <- function(x) sum(!is.na(x))
+# Generation (or wave) of each mouse.
+table(qtl2shiny::read_project(project_df, "cross_info", "misc"))
+
+# Gene information; includes mus-human comparisons.
+gene_annos <- qtl2shiny::read_project(project_df, "gene_annos", "misc")
+is_human <- grep("hum", names(gene_annos))
+sapply(gene_annos[,-is_human], sum_na)
+sapply(gene_annos[is_human], sum_na)
+
+# Isoform transcript information; includes mus-human comparisons.
+transcript_annos <- qtl2shiny::read_project(project_df, "transcript_annos", "misc")
+is_human <- grep("hum", names(transcript_annos))
+sapply(transcript_annos[,-is_human], sum_na)
+sapply(transcript_annos[is_human], sum_na)
+
+# Genotype of founder across all markers (1,2,3)
+sapply(qtl2shiny::read_project(project_df, "founder_geno", "misc"), dim)
+
+rm(sum_na, gene_annos, transcript_annos, is_human)
+```
+
+## DO1200 Genotype Data
+
+### Kinship
+
+Kinship file `kinship_loco` is renamed `kinship`.
+
+```{r eval=FALSE}
+if(!file.exists(kinship_rds <- file.path(project_path, "kinship.rds"))) {
+  kinship <- readRDS(file.path(rd_dir, "k_loco_DO1200_grcm39.rds"))
+  saveRDS(kinship, kinship_rds)
+}
+```
+
+```{r}
+sapply(qtl2shiny::read_project(project_df, "kinship"), dim)
+```
 
 ### Genes and SNP Variants
 
-```{r}
+**This is not quite right. Need to know where these came from (`from_path`).
+Copying these files takes a long time.
+
+```{r eval=FALSE}
 sql_files <- paste0(c("mouse_genes", "cc_variants"), "_grcm39.sqlite")
 if(!all(file.exists(file.path(taxa_path, sql_files)))) {
   for(i in sql_files) {
     message("copying ", i)
-    system(paste0("cp ", file.path(taxa_path, i), " ", taxa_path))
+    system(paste0("cp ", file.path(from_path, i), " ", taxa_path))
   }
 }
 ```
@@ -95,6 +233,7 @@ if(file.exists(qname <- file.path(taxa_path, "query_variants_grcm39.rds"))) {
 ### Genotype Probabilities
 
 Separate FST collections for alleles, allele pairs and SNPs.
+These take a long time to copy.
 
 ```
 probs_fst/
@@ -136,53 +275,141 @@ if(file.exists(qname <- file.path(project_path, "query_probs.rds"))) {
 }
 ```
 
-### Datasets and Phenotypes
+## DO1200 Phenotype Data
+
+### DO1200 Covariate Data
 
 Covariates were already retrieved from the `cross` object.
+They are also available as CSV from the `files_for_cross_object` folder.
+The `covar_df` object is a dataframe with mouse ID as `rownames`.
+
+```{r eval=FALSE}
+if(!file.exists(covar_rds <- file.path(project_path, "covar.rds"))) {
+  covar_df <- readRDS(file.path(rd_dir, "..", "files_for_cross_object",
+                                "covar.csv"))
+  saveRDS(covar_df, covar_rds)
+}
+```
+
+### DO1200 Phenotypes by Class
+
+```
+DO1200/pheno/
+```
+
+Phenotypes are organized by classes.
+The raw data come from
+
+```{r}
+dir(file.path(rd_dir, "../files_for_cross_object"), pattern = "^pheno_.*")
+```
+
+The data were copied over as CSV, read, and saved as RDS.
+These files have Mouse as first column, so are data frames.
+They are saved in cross object as matrix with rownames being Mouse ID.
+
+Right now they are saved as `pheno_<class>.rds` as dataframe,
+but might be better as `pheno/<class>.rds` as matrix with rownames,
+since that is how they will be used.
+
+Note that translation from CSV to RDS can introduce artefacts,
+such as `"#DIV/0!"` errors.
+
+### Classes and Phenotypes
+
 Phenotypes depend on `dataset`.
 
 ```{r}
-datasets <- dir(file.path(rd_dir, "..", "files_for_cross_object"),
+classes <- dir(file.path(rd_dir, "..", "files_for_cross_object"),
                 pattern = "pheno_.*")
-dataset_names <- stringr::str_replace(
+class_names <- stringr::str_replace(
   stringr::str_remove(
     stringr::str_remove(
       stringr::str_remove(
         stringr::str_remove(
-          stringr::str_remove(datasets, ".csv$"),
+          stringr::str_remove(classes, ".csv$"),
           "_v[0-9]+$"),
         "_(DO_diet_batch|DO_diet|combat)_(corrected|nonzero150_qqnorm|nonzero150_vsd)"),
       "^pheno_"),
     "(in_vivo_|_GTT_metatraits)"),
   "((13C|2H))_metabolite", "metabolites_\\1")
-names(datasets) <- dataset_names
-datasets
+names(classes) <- class_names
+classes
 ```
 
-The following saves `datasets` as `pheno_xxx.rds` with `xxx` the
-`dataset_names`.
+The following saves `classes` as `pheno_xxx.rds` with `xxx` the
+`class_names`.
 This is OK for now, but may want to save as FST later.
-Also need to modify routine `pheno_read` or create another routine
-`read_dataset`
-
-```{r}
-read_dataset <- function(project_info, dataset_name) {
-  project_path <- paste(rev(project_info), collapse = "/")
-  readRDS(file.path(project_path, paste0("pheno_", dataset_name, ".rds")))
-}
-```
 
 
 ```{r}
-if(!file.exists(file.path(project_path, "pheno_clinical.rds"))) {
-  for(i in dataset_names) {
-    savepath <- file.path(project_path, paste0("pheno_", i, ".rds"))
+if(!file.exists(file.path(project_path, "pheno", "pheno_clinical_traits.rds"))) {
+  for(i in names(classes)) {
+    savepath <- file.path(project_path, "pheno", paste0("pheno_", i, ".rds"))
     print(savepath)
-    pheno_path <- file.path(rd_dir, "..", "files_for_cross_object", datasets[i])
+    pheno_path <- file.path(rd_dir, "..", "files_for_cross_object", classes[i])
     saveRDS(read.csv(pheno_path), savepath)
   }
 }
 ```
+
+#### Modify Phenotypes to make Matrices with Class Names
+
+The `classes` above are not quite right.
+The `plasma_metabolites` need to be combined, and the `liver_psi`
+needs to be renamed `liver_splice_juncs`.
+
+```{r eval=FALSE}
+if(!file.exists(file.path(project_path, "pheno", "pheno_liver_splice_juncs.rds"))) {
+  system(paste0("mv ",
+                file.path(project_path, "pheno", "pheno_liver_psi.rds"),
+                " ",
+                file.path(project_path, "pheno", "pheno_liver_splice_juncs.rds")))
+}
+```
+
+```{r eval=FALSE}
+pm <- file.path(project_path, "pheno", "pheno_plasma_metabolites")
+if(!file.exists(paste0(pm, ".rds"))) {
+  pm1 <- readRDS(paste0(pm, "_13C.rds"))
+  pm2 <- readRDS(paste0(pm, "_2H.rds"))
+  pmall <- dplyr::full_join(pm1, pm2, by = "Mouse")
+  saveRDS(pmall, paste0(pm, ".rds"))
+  system(paste("rm ", paste0(pm, "_13C.rds "), paste0(pm, "_2H.rds")))
+  rm(pm1, pm2, pmall)
+}
+```
+
+```{r}
+classes <- dir(file.path(project_path, "pheno"), pattern = "pheno_.*")
+class_names <- stringr::str_remove(
+  stringr::str_remove(classes, "^pheno_"),
+  ".rds$")
+names(classes) <- class_names
+classes
+```
+
+Now, phenotype objects will be changed to have `rownames` as
+the first column and saved as matrices.
+
+```{r eval=FALSE}
+phenos <- dir(file.path(project_path, "pheno"), pattern = "pheno_.*")
+for(i in phenos) {
+  print(i)
+  phenoi <- readRDS(file.path(project_path, "pheno", i))
+  if(!is.matrix(phenoi)) {
+    phenoi <- tibble::column_to_rownames(phenoi, var = names(phenoi)[1])
+    types <- sapply(phenoi, class)
+    if(!all(types == "numeric")) {
+      for(j in which(types != "numeric"))
+        phenoi[[j]] <- as.numeric(phenoi[[j]])
+    }
+    phenoi <- as.matrix(phenoi)
+    saveRDS(phenoi, file.path(project_path, "pheno", i))
+  }
+}
+```
+
 
 ### Peaks by Dataset and Covariates by Phenotype
 
@@ -261,24 +488,34 @@ The peaks files (previous section) include model information on
 It would be useful to switch to this.
 Most of the rest of this is dated, I think.
 
+Here is what seems to be needed in `analyses_tbl`:
+
+- `qtl2shiny::setupServer()`
+  - `pheno_group`: general `dataset` name
+  - `pheno_type`: specific `dataset` as subset of `pheno_group`, such as `Islet.mRNA.19`
+  - `qtl2shiny:::set_analyses(input$dataset, input$pheno_group, analyses_tbl())`
+  - `qtl2shiny:::num_pheno(character(), analyses_tbl())`
+  - `dplyr::count(analyses_tbl, pheno_group, pheno_type)` (for project "AttieDO")
+- `qtl2shiny::hotspotServer()`
+  - `pheno_group`: one of `sort(unique(analyses_tbl$pheno_group))`
+  - `dataset`: `c("all", sort(unique(analyses_tbl$pheno_type)))`
+- `qtl2mediate::scan1covar()` function uses:
+  - `analyses_df$model`
+  - `which_covar(analyses_df)`
+  - `covarset <- apply(analyses_df, 1, function(x) paste(1 * x, collapse = ""))`
+  - `scanfn(probs_obj, phe_mx, kinship, cov_df, analyses_df, wh, models, ...)`
+  - `which_covar` and `scanfn` are local functions
+
 The following need to be updated.
 Phenotypes are easy, as we draw from the appropriate dataset.
 Covariates--can use the whole data frame `covar`.
 
 ```{r}
-pheno_data <- qtl2shiny:::pheno_read(project_info, analyses_tbl)
-phe_mx <- qtl2shiny:::pheno_read(project_info, analyses_df)
+pheno_data <- qtl2shiny:::pheno_read(project_df, analyses_tbl)
+phe_mx <- qtl2shiny:::pheno_read(project_df, analyses_df)
 cov_df <- qtl2mediate::get_covar(covar, analyses_df)
 ```
 
-The `qtl2mediate::scan1covar()` function uses:
-
-- `analyses_df$model`
-- `which_covar(analyses_df)`
-- `covarset <- apply(analyses_df, 1, function(x) paste(1 * x, collapse = ""))`
-- `scanfn(probs_obj, phe_mx, kinship, cov_df, analyses_df, wh, models, ...)`
-
-`which_covar` and `scanfn` are local functions
 
 ```{r}
 scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, probs_obj$probs, K_chr,
@@ -359,58 +596,6 @@ DO1200/gmap.rds
 DO1200/covar.rds
 ```
 
-```{r}
-cross <- readRDS(file.path(rd_dir, "cross_DO_diet_grcm39_v6.rds"))
-```
-
-```{r}
-names(cross)
-```
-
-```{r}
-sapply(cross$gmap, length)
-sapply(cross$pmap, length)
-```
-
-```{r}
-sum_na <- function(x) sum(!is.na(x))
-
-# Generation (or wave) of each mouse.
-table(cross$cross_info)
-
-# Gene information; includes mus-human comparisons.
-is_human <- grep("hum", names(cross$gene_annos))
-sapply(cross$gene_annos[,-is_human], sum_na)
-sapply(cross$gene_annos[is_human], sum_na)
-
-# Isoform transcript information; includes mus-human comparisons.
-is_human <- grep("hum", names(cross$transcript_annos))
-sapply(cross$transcript_annos[,-is_human], sum_na)
-sapply(cross$transcript_annos[is_human], sum_na)
-
-# Genotype of founder across all markers (1,2,3)
-sapply(cross$founder_geno, dim)
-
-# Covariates; no missing values.
-sapply(cross$covar, sum_na)
-```
-
-```{r}
-save_crosser <- function(x, # name
-                         frompath = fd_dir,
-                         savex = x,
-                         topath = project_path) {
-  if(!file.exists(savepath <- file.path(topath, paste0(savex, ".rds")))) {
-    saveRDS(cross[[x]], savepath)
-  }
-}
-```
-
-```{r, eval=FALSE}
-save_crosser("pmap")
-save_crosser("gmap")
-```
-
 ```{r, eval=FALSE}
 # Likely need to adapt to other covars as well?
 # Gen = DOgen in code (DOwave also present)
@@ -434,19 +619,6 @@ save_crosser("covar")
 [10] "plasma_2H_metab_batch"   
 ```
 
-### Hotspots
-
-```
-DO1200/hotspot.rds
-```
-
-Hotspots object is created with
-
-```{r, eval=FALSE}
-hots <- qtl2shiny::hotspot(pmap, peaks)
-saveRDS(hots, file.path(project_path, "hotspot.rds"))
-```
-
 ### Phenotypes
 
 ```
@@ -455,7 +627,7 @@ DO1200/pheno_data.rds
 
 This will take the most work to redesign.
 
-### RNASeq
+#### RNASeq
 
 Need to review this carefully
 
