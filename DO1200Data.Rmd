@@ -2,7 +2,7 @@
 title: "DO1200"
 author: "Brian Yandell"
 date: "2025-06-12"
-output: html_document
+output: md_document
 ---
 
 ```{r setup, include=FALSE}
@@ -66,8 +66,8 @@ Some processing is done, for instance to put data in RDS files
 for quicker access and to combine disparate phenotype files.
 
 CSV files were transferred by hand, read and saved as RDS.
-For instance, peaks came from
-`file.path(rd_dir, "..", "annotated_peak_summaries")`
+For instance, peaks came from RD folder
+`annotated_peak_summaries`
 as CSV files, and landed in 
 `qtl2shinyData/CCmouse/DO1200/peaks`
 as RDS files.
@@ -123,6 +123,42 @@ if(!dir.exists(project_path)) dir.create(project_path, recursive = TRUE)
 dir(project_path)
 ```
 
+The filesystem organization is as follows (focused on `DO1200` project)
+
+```
+qtl2shinyApp/
+├── README.md                           # Overall README file
+├── .gitignore                          # Git ignore file
+├── DO1200Data.Rmd                      # This file
+├── DO1200Study.Rmd                     # Initial DO1200 study and analysis
+├── app.R                               # qtl2shiny app
+├── projects.csv                        # project information
+# following folders are **not** maintained on GitHub
+├── qtl2shinyData/                      # data directory
+    └── CCmouse                         # CC mouse taxa directory
+        ├── allele_info.rds.            # CC mouse allele information
+        ├── mouse_genes_grcm39.sqlite   # SQLite database for variants
+        ├── cc_variants_grcm39.sqlite   # SQLite database for genes
+        ├── query_variants_grcm39.rds   # query function for variants
+        ├── query_genes_grcm39.rds      # query function for genes
+        └── DO1200                      # directory for DO1200 project
+```
+
+with files in the `DO1200` folder organized as follows
+
+```
+DO1200/
+├── README.md                           # project overview file
+├── query_probs.rds                     # query function for genoprobs`
+├── peak/                               # peak summary objects by class & model
+    └── DO1200_<class>_<model>_peaks.rds # peak file for a class & model
+├── pheno/                              # phenotype data matrices by class
+    └── pheno_<class>.rds               # phenotype data matrix for a class
+├── probs_fst/ or genoprob/             # genoprobs in `qtl2fst` format
+├── covar.rds                           # covariate data frame
+├── kinship_loco.rds                    # kinship object (list)
+└── pmap.rds                            # physical map object (list)
+```
 ### Miscellaneous Items from Cross Object
 
 The cross object is huge and takes a long time to load. 
@@ -146,24 +182,25 @@ if(!file.exists(file.path(project_path, "covar.rds"))) {
 }
 ```
 
-```{r eval=FALSE}
+```{r}
 sum_na <- function(x) sum(!is.na(x))
-# Generation (or wave) of each mouse.
+
+print("Generation (or wave) of each mouse.")
 table(qtl2shiny::read_project(project_df, "cross_info", "misc"))
 
-# Gene information; includes mus-human comparisons.
+print("Gene information; includes mus-human comparisons.")
 gene_annos <- qtl2shiny::read_project(project_df, "gene_annos", "misc")
 is_human <- grep("hum", names(gene_annos))
 sapply(gene_annos[,-is_human], sum_na)
 sapply(gene_annos[is_human], sum_na)
 
-# Isoform transcript information; includes mus-human comparisons.
+print("Isoform transcript information; includes mus-human comparisons.")
 transcript_annos <- qtl2shiny::read_project(project_df, "transcript_annos", "misc")
 is_human <- grep("hum", names(transcript_annos))
 sapply(transcript_annos[,-is_human], sum_na)
 sapply(transcript_annos[is_human], sum_na)
 
-# Genotype of founder across all markers (1,2,3)
+print("Genotype of founder across all markers (1,2,3).")
 sapply(qtl2shiny::read_project(project_df, "founder_geno", "misc"), dim)
 
 rm(sum_na, gene_annos, transcript_annos, is_human)
@@ -171,7 +208,18 @@ rm(sum_na, gene_annos, transcript_annos, is_human)
 
 ## DO1200 Genotype Data
 
+### Maps
+
+```
+DO1200/pmap.rds
+DO1200/misc/gmap.rds
+```
+
 ### Kinship
+
+```
+DO1200/kinship.rds from k_loco_DO_diet_grcm39.rds
+```
 
 Kinship file `kinship_loco` is renamed `kinship`.
 
@@ -184,6 +232,51 @@ if(!file.exists(kinship_rds <- file.path(project_path, "kinship.rds"))) {
 
 ```{r}
 sapply(qtl2shiny::read_project(project_df, "kinship"), dim)
+```
+
+### Genotype Probabilities
+
+Separate FST collections for alleles, allele pairs and SNPs.
+These take a long time to copy.
+
+```
+probs_fst/
+```
+
+```{r}
+list.files(file.path(rd_dir, "probs_fst"), pattern = "*.rds")
+```
+
+```{r}
+if(!dir.exists(file.path(project_path, "probs_fst"))) {
+  system(paste0("cp -r ", file.path(rd_dir, "probs_fst"), " ", project_path))
+}
+```
+
+```{r}
+dim(readRDS(file.path(project_path, "probs_fst", "alleleprobs_fstindex.rds")))
+```
+
+```{r}
+dim(readRDS(file.path(project_path, "probs_fst", "genoprobs_fstindex.rds")))
+```
+
+```{r}
+dim(readRDS(file.path(project_path, "probs_fst", "snpprobs_fstindex.rds")))
+```
+
+Use `create_probs_query_func` from package 'qtl2pattern' to query genotype probabilities.
+Save it in RDS format for later use. Note that it requires a relative address to the project data provided by `project_path`.
+
+```{r eval=FALSE}
+if(file.exists(qname <- file.path(project_path, "query_probs.rds"))) {
+  warning(paste("probs query", qname,
+                "already exists and will not be overwritten"))
+} else {
+  query_probs <- qtl2pattern::create_probs_query_func(
+    project_path, probdir = "probs_fst")
+  saveRDS(query_probs, qname)
+}
 ```
 
 ### Genes and SNP Variants
@@ -230,48 +323,46 @@ if(file.exists(qname <- file.path(taxa_path, "query_variants_grcm39.rds"))) {
 }
 ```
 
-### Genotype Probabilities
-
-Separate FST collections for alleles, allele pairs and SNPs.
-These take a long time to copy.
+### SQL for genes and variants
 
 ```
-probs_fst/
+CCmouse/mouse_genes_grcm39.sqlite
+CCmouse/cc_variants_grcm39.sqlite
 ```
 
-```{r}
-list.files(file.path(rd_dir, "probs_fst"), pattern = "*.rds")
+```{r eval=FALSE}
+for(i in c("mouse_genes", "cc_variants"))
+system(paste0("cp ",
+              file.path(rd_dir, paste0(i, "_grcm39.sqlite")),
+              " ",
+              taxa_path))
 ```
 
-```{r}
-if(!dir.exists(file.path(project_path, "probs_fst"))) {
-  system(paste0("cp -r ", file.path(rd_dir, "probs_fst"), " ", project_path))
+Need to construct `query_variants.rds` and `query_genes.rds`.
+Look on qtl2shiny vignette
+[qtl2shinyData.Rmd](https://github.com/byandell-sysgen/qtl2shiny/blob/master/vignettes/qtl2shinyData.Rmd).
+
+```{r eval=FALSE}
+if(file.exists(qname <- file.path(taxa_path, "query_genes.rds"))) {
+  warning(paste("gene query", qname,
+                "already exists and will not be overwritten"))
+} else {
+  query_genes <- 
+    qtl2::create_gene_query_func(
+      file.path(taxa_path, "mouse_genes_grcm39.sqlite"))
+  saveRDS(query_genes, qname)
 }
 ```
 
-```{r}
-dim(readRDS(file.path(project_path, "genoprob", "alleleprobs_fstindex.rds")))
-```
-
-```{r}
-dim(readRDS(file.path(project_path, "genoprob", "genoprobs_fstindex.rds")))
-```
-
-```{r}
-dim(readRDS(file.path(project_path, "genoprob", "snpprobs_fstindex.rds")))
-```
-
-Use `create_probs_query_func` from package 'qtl2pattern' to query genotype probabilities.
-Save it in RDS format for later use. Note that it requires a relative address to the project data provided by `project_path`.
-
-```{r}
-if(file.exists(qname <- file.path(project_path, "query_probs.rds"))) {
-  warning(paste("probs query", qname,
+```{r eval=FALSE}
+if(file.exists(qname <- file.path(taxa_path, "query_variants.rds"))) {
+  warning(paste("variant query", qname,
                 "already exists and will not be overwritten"))
 } else {
-  query_probs <- qtl2pattern::create_probs_query_func(
-    project_path, probdir = "probs_fst")
-  saveRDS(query_probs, qname)
+  query_variants <- 
+    qtl2::create_variant_query_func(
+      file.path(taxa_path, "cc_variants_grcm39.sqlite"))
+  saveRDS(query_variants, qname)
 }
 ```
 
@@ -315,9 +406,19 @@ since that is how they will be used.
 Note that translation from CSV to RDS can introduce artefacts,
 such as `"#DIV/0!"` errors.
 
+The `misc` file `phenocovar` has information across all phenotypes and
+covariates.
+This is not used here.
+
+```{r}
+table(qtl2shiny::read_project(project_df, "phenocovar", "misc")$dataset)
+```
+
 ### Classes and Phenotypes
 
-Phenotypes depend on `dataset`.
+Phenotypes are organized by `class`.
+Here are the pheno files on the RD server,
+with changes of `class` as developed below to agree with `class` of `peaks`.
 
 ```{r}
 classes <- dir(file.path(rd_dir, "..", "files_for_cross_object"),
@@ -342,7 +443,7 @@ The following saves `classes` as `pheno_xxx.rds` with `xxx` the
 This is OK for now, but may want to save as FST later.
 
 
-```{r}
+```{r eval=FALSE}
 if(!file.exists(file.path(project_path, "pheno", "pheno_clinical_traits.rds"))) {
   for(i in names(classes)) {
     savepath <- file.path(project_path, "pheno", paste0("pheno_", i, ".rds"))
@@ -410,7 +511,6 @@ for(i in phenos) {
 }
 ```
 
-
 ### Peaks by Dataset and Covariates by Phenotype
 
 There are many peaks files.
@@ -418,8 +518,11 @@ Need to decide if plan is to combine peaks files or have a bunch of
 different ones. If combined, need columns for dataset, intset and dietset.
 
 ```
-DO1200/peaks.rds
+DO1200/peaks/DO1200_<class>_<model>_peaks.rds
 ```
+
+Here are peaks files on RD server for all `class`es with `model`
+`all_mice_additive`:
 
 ```{r}
 peaksets <- dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
@@ -433,226 +536,35 @@ names(peaksets) <- peakset_names
 peaksets
 ```
 
-```{r}
-peak_path <- file.path(project_path, "peaks")
-for(i in tools::file_path_sans_ext(dir(peak_path))) {
-  print(i)
-  saveRDS(read.csv(file.path(peak_path, paste0(i, ".csv"))),
-          file.path(peak_path, paste0(i, ".rds")))
-}
-```
+and all `peaks` files for class `clinical_traits` with `additive` model,
 
 ```{r}
 dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
     pattern = "^.*_clinical_traits_.*additive_peaks.csv")
 ```
 
+and all `peaks` files for class `clinical_traits`.
+
 ```{r}
 dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
     pattern = "^.*_clinical_traits_.*_peaks.csv")
 ```
 
-```{r}
-# "clinical_traits", liver_genes"m "liver_isoforms", "liver_lipids", "liver_splice_juncs"
-dataset <- "clinical_traits"
-# "all", "HC", "HF"
-dietset <- "all"
-# "additive", "interactive"
-intset <- "additive"
-peakpath <- file.path(rd_dir, "..", "annotated_peak_summaries",
-                      paste0("DO1200_", dataset, "_", dietset,
-                             "_mice_", intset, "_peaks.csv"))
-print(peakpath)
-savepath <- file.path(project_path, "peaks.rds")
-print(savepath)
-saveRDS(read.csv(peakpath), savepath)
-```
+The following code reads all CSV files from RD server
+and saves locally as RDS files
 
-Hotspots object is created with `hotspot`.
-** Need to walk through this to find name changes in new data.**
-
-```{r, eval=FALSE}
-hots <- qtl2shiny::hotspot(pmap_obj,
-                           dplyr::rename(peaks, lod = "qtl_lod"))
-saveRDS(hots, file.path(project_path, "hotspot.rds"))
-```
-
-### Analyses Table
-
-```
-DO1200/analyses.rds.  # see comments below
-```
-
-The peaks files (previous section) include model information on
-`addcovar` and `intcovar`.
-It would be useful to switch to this.
-Most of the rest of this is dated, I think.
-
-Here is what seems to be needed in `analyses_tbl`:
-
-- `qtl2shiny::setupServer()`
-  - `pheno_group`: general `dataset` name
-  - `pheno_type`: specific `dataset` as subset of `pheno_group`, such as `Islet.mRNA.19`
-  - `qtl2shiny:::set_analyses(input$dataset, input$pheno_group, analyses_tbl())`
-  - `qtl2shiny:::num_pheno(character(), analyses_tbl())`
-  - `dplyr::count(analyses_tbl, pheno_group, pheno_type)` (for project "AttieDO")
-- `qtl2shiny::hotspotServer()`
-  - `pheno_group`: one of `sort(unique(analyses_tbl$pheno_group))`
-  - `dataset`: `c("all", sort(unique(analyses_tbl$pheno_type)))`
-- `qtl2mediate::scan1covar()` function uses:
-  - `analyses_df$model`
-  - `which_covar(analyses_df)`
-  - `covarset <- apply(analyses_df, 1, function(x) paste(1 * x, collapse = ""))`
-  - `scanfn(probs_obj, phe_mx, kinship, cov_df, analyses_df, wh, models, ...)`
-  - `which_covar` and `scanfn` are local functions
-
-The following need to be updated.
-Phenotypes are easy, as we draw from the appropriate dataset.
-Covariates--can use the whole data frame `covar`.
-
-```{r}
-pheno_data <- qtl2shiny:::pheno_read(project_df, analyses_tbl)
-phe_mx <- qtl2shiny:::pheno_read(project_df, analyses_df)
-cov_df <- qtl2mediate::get_covar(covar, analyses_df)
-```
-
-
-```{r}
-scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, probs_obj$probs, K_chr,
-                                    analyses_df, sex_type = sex_type)
-snp_scan_obj <- qtl2mediate::scan1covar(phe_mx, cov_df, snpprobs_act, K_chr,
-                                analyses_df, sex_type = sex_type)
-```
-
-### SQL for genes and variants
-
-```
-CCmouse/mouse_genes_grcm39.sqlite
-CCmouse/cc_variants_grcm39.sqlite
-```
-
-```{r, eval=FALSE}
-for(i in c("mouse_genes", "cc_variants"))
-system(paste0("cp ",
-              file.path(rd_dir, paste0(i, "_grcm39.sqlite")),
-              " ",
-              taxa_dir))
-```
-
-Need to construct `query_variants.rds` and `query_genes.rds`.
-Look on qtl2shiny vignette
-[qtl2shinyData.Rmd](https://github.com/byandell-sysgen/qtl2shiny/blob/master/vignettes/qtl2shinyData.Rmd).
-
-```{r}
-if(file.exists(qname <- file.path(taxa_dir, "query_genes.rds"))) {
-  warning(paste("gene query", qname,
-                "already exists and will not be overwritten"))
-} else {
-  query_genes <- 
-    qtl2::create_gene_query_func(
-      file.path(taxa_path, "mouse_genes_grcm39.sqlite"))
-  saveRDS(query_genes, qname)
+```{r eval=FALSE}
+peaknames <- tools::file_path_sans_ext(
+  dir(file.path(rd_dir, "..", "annotated_peak_summaries"),
+      pattern = "^DO1200_.*peaks.csv"))
+for(peaki in peaknames) {
+  print(peaki)
+  if(!file.exists(filename <- file.path(project_path, "peaks",
+                                        paste0(peaki, ".rds")))) {
+    peakcsv <- read.csv(file.path(rd_dir, "..", "annotated_peak_summaries",
+                       paste0(peaki, ".csv")))
+    print("saved as RDS")
+    saveRDS(peakcsv, filename)
+  }
 }
-```
-
-```{r}
-if(file.exists(qname <- file.path(taxa_dir, "query_variants.rds"))) {
-  warning(paste("variant query", qname,
-                "already exists and will not be overwritten"))
-} else {
-  query_variants <- 
-    qtl2::create_variant_query_func(
-      file.path(taxa_path, "cc_variants_grcm39.sqlite"))
-  saveRDS(query_variants, qname)
-}
-```
-
-### K `loco` matrix
-
-```
-DO1200/kinship.rds from k_loco_DO_diet_grcm39.rds
-```
-
-```{r, eval=FALSE}
-system(paste0("cp ",
-              file.path(rd_dir, "k_loco_DO_diet_grcm39.rds"),
-              " ",
-              file.path(project_path, "kinship.rds")))
-```
-
-```{r}
-sapply(readRDS(file.path(rd_dir, "k_loco_DO_diet_grcm39.rds")), dim)
-```
-
-```{r}
-sapply(readRDS(file.path(project_path, "kinship.rds")), dim)
-```
-
-### Maps and Covariates
-
-```
-DO1200/pmap.rds
-DO1200/gmap.rds
-DO1200/covar.rds
-```
-
-```{r, eval=FALSE}
-# Likely need to adapt to other covars as well?
-# Gen = DOgen in code (DOwave also present)
-# Check other covariates
-save_crosser("covar")
-```
-
-```
-> names(covar) # AttieDOv2
- [1] "mouse"              "sex"                "sac_date"           "partial_inflation" 
- [5] "coat_color"         "oGTT_date"          "FAD_NAD_paired"     "FAD_NAD_filter_set"
- [9] "crumblers"          "birthdate"          "diet_days"          "num_islets"        
-[13] "DOgen"              "DOwave"
-```
-
-```
-> names(cross$covar) # DO1200
- [1] "Gen"                    "GenLit"                 "Sex"                   
- [4] "Diet"                   "liver_lipids_batch"     "chol_batch"            
- [7] "true_TG_batch"          "KB_batch"               "plasma_13C_metab_batch"
-[10] "plasma_2H_metab_batch"   
-```
-
-### Phenotypes
-
-```
-DO1200/pheno_data.rds
-```
-
-This will take the most work to redesign.
-
-#### RNASeq
-
-Need to review this carefully
-
-```{r}
-
-```
-
-## Genoprobs for alleles, allele pairs and SNPs
-
-```
-probs_fst/
-```
-
-```{r}
-list.files(file.path(rd_dir, "probs_fst"), pattern = "*.rds")
-```
-
-```{r}
-dim(readRDS(file.path(rd_dir, "probs_fst", "alleleprobs_fstindex.rds")))
-```
-
-```{r}
-dim(readRDS(file.path(rd_dir, "probs_fst", "genoprobs_fstindex.rds")))
-```
-
-```{r}
-dim(readRDS(file.path(rd_dir, "probs_fst", "snpprobs_fstindex.rds")))
 ```

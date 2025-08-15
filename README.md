@@ -74,7 +74,7 @@ are renamed or combined for consistency with `class` naming
     └── <project>_<class>_<model>_peaks.rds # peak file for a class & model
 ├── pheno/                              # phenotype data matrices by class
     └── pheno_<class>.rds               # phenotype data matrix for a class
-├── probs_fst/                          # genoprobs in `qtl2fst` format
+├── probs_fst/ or genoprob/             # genoprobs in `qtl2fst` format
 ├── covar.rds                           # covariate data frame
 ├── kinship_loco.rds                    # kinship object (list)
 └── pmap.rds                            # physical map object (list)

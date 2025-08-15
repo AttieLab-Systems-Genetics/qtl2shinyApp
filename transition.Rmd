@@ -1,0 +1,597 @@
+---
+title: "qtl2shiny transition"
+author: "Brian Yandell"
+date: "2025-08-04"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Goal here is to transition from old (~2010) data format to modern (~2024) format. This mainly concerns `analyses` and `peaks` files and handling of covariates.
+
+## Projects
+
+```{r}
+projects_df <- read.csv("qtl2shinyData/projects.csv", stringsAsFactors = FALSE)
+projects_df
+```
+
+## Analyses
+
+The `analyses` file had various columns for data transformation,
+which are now replaced by the uniform `rankz()` computation.
+There also were columns, starting with `sex`,
+for all the covariates with `TRUE` or `FALSE` values.
+These are replaced by `addcovar` and `intcovar` in revised `peaks` file.
+
+The original `qtl2shiny` code has another feature in it, the `sex_type`,
+which takes on values c("A", "I", "F", "M", "all"), which allowed incorporation
+of `sex_interaction` or single sex. This will need substantial rewrite.
+
+Plan is to first make the code work with `additive` covariates,
+while enabling use of `intcovar`.
+
+```{r}
+analyses_old <- qtl2shiny:::read_project(projects_df[4, ], "analyses",
+                                         legacy = TRUE)
+```
+
+```{r}
+names(analyses_old)
+```
+
+```{r}
+dplyr::count(analyses_old, pheno_group, pheno_type)
+```
+
+```{r}
+table(analyses_old$weight_sac)
+```
+
+Here is what seems to be needed in `analyses_tbl`:
+
+- `qtl2shiny::setupServer()`
+  - `pheno_group`: general `dataset` name
+  - `pheno_type`: specific `dataset` as subset of `pheno_group`, such as `Islet.mRNA.19`
+  - `qtl2shiny:::set_analyses(input$dataset, input$pheno_group, analyses_tbl())`
+  - `qtl2shiny:::num_pheno(character(), analyses_tbl())`
+  - `dplyr::count(analyses_tbl, pheno_group, pheno_type)` (for project "AttieDO")
+- `qtl2shiny::hotspotServer()`
+  - `pheno_group`: one of `sort(unique(analyses_tbl$pheno_group))`
+  - `dataset`: `c("all", sort(unique(analyses_tbl$pheno_type)))`
+- `qtl2mediate::scan1covar()` function uses:
+  - `analyses_df$model`
+  - `which_covar(analyses_df)`
+  - `covarset <- apply(analyses_df, 1, function(x) paste(1 * x, collapse = ""))`
+  - `scanfn(probs_obj, phe_mx, kinship, cov_df, analyses_df, wh, models, ...)`
+  - `which_covar` and `scanfn` are local functions
+
+The `analyses` object was used for processing scans in
+`scan1covar()`, `covar_matrix()` and `which_covar()`,
+all found in branch `refactor` as
+[qtl2shiny/R/scan1covarR](https://github.com/byandell-sysgen/qtl2shiny/blob/refactor/R/scan1covar.R)
+(originally and still in
+[qtl2mediate/R/scan1covar.R](https://github.com/byandell-sysgen/qtl2mediate/blob/master/R/scan1covar.R)).
+See also `sexcovar()`, `wh_sex()`, `scansex()` and `scanfn()`.
+This is being replaced by code that uses the new `peaks` columns
+`addcovar` and `intcovar`, which have character versions of formula to
+be used with the base `model.matrix()` function.
+
+```{r}
+wh <- grep("sex", names(analyses_old))
+(covar_cols <- names(analyses_old)[-seq_len(wh - 1)])
+```
+
+The peaks files include model information on
+`addcovar` and `intcovar`.
+
+```{r}
+addcovar <- apply(analyses_old[, covar_cols], 1, function(x)
+paste0("~", paste0(covar_cols[x], collapse = "+")))
+table(addcovar)
+```
+
+## Peaks files.
+
+Old code had one `peaks` file. New code need to accommodate multiple
+`peaks` files, with the following breakdowns used for `DO1200` project:-`class` of phenotypes (32 runs currently)
+
+- `clinical_traits` (5)
+- `liver_genes` (9
+includes `female` and `male` only runs)
+- `liver_isoforms` (5)
+- `liver_lipids` (4
+no `sex_interactive`)
+- `liver_splice_juncs` (4
+no `sex_interactive`)
+- `plasma_metabolites` (5)
+- subsets of mice
+  - `all_mice`
+  - `female_mice`
+  - `male_mice`
+  - `HC_mice`
+  - `HF_mice`
+- covariate format
+  - `additive`
+  - `diet_interactive`
+  - `sex_interactive`
+  - `sexbydiet_interactive`
+
+There are now multiple `peaks` files in folder `peaks`:
+
+```{r eval = FALSE}
+dir("qtl2shinyData/CCmouse/DO1200/peaks")
+```
+
+The old `peaks` file has `pheno_group` and `pheno_type` columns.
+
+```{r}
+peaks_old <- qtl2shiny::read_project(projects_df[1, ], "peaks", legacy = TRUE)
+names(peaks_old)
+```
+
+```{r}
+dplyr::count(peaks_old, pheno_group, pheno_type)
+```
+
+The new `peaks` uses the column `phenotype_class`.
+
+```{r}
+peaks_new <- qtl2shiny:::read_peaks(projects_df[2, ], "liver_genes")
+names(peaks_new)
+```
+
+```{r}
+dplyr::count(peaks_new, phenotype_class)
+```
+
+### Refactor Old Peaks using Analyses Table
+
+The `pheno_group` and `pheno_type` are replaced by `phenotype_class`
+(mainly corresponds to `pheno_group`), and `chr`, `pos`, `lod` are replaced by
+`qtl_chr`, `qtl_pos`, `qtl_lod`.
+Traits that are associated with genes have additional columns
+`gene_chr`, `gene_start`, `gene_end` and `gene_strand`,
+which are useful for mediation.
+
+Also, `addcovar` and `intcovar` server the purpose of some columns of
+`analyses` file.
+Previous work only used additive covariates, so changes will be needed
+to accommodate that.
+
+Create peaks folders and RDS for classes of phenotypes.
+Use option `force = TRUE` to recreate.
+
+```{r}
+print(projects_df[1, "project"])
+qtl2shiny::create_peak_class(projects_df[1, ])
+```
+
+```{r}
+peaks_df <- qtl2shiny::read_peaks(projects_df[1, ], "group")
+table(peaks_df$addcovar)
+```
+
+```{r}
+print(projects_df[2, "project"])
+qtl2shiny::create_peak_class(projects_df[2, ])
+```
+
+```{r}
+peaks_df <- qtl2shiny::read_peaks(projects_df[2, ], "clinical_traits")
+table(peaks_df$addcovar)
+```
+
+```{r}
+print(projects_df[3, "project"])
+qtl2shiny::create_peak_class(projects_df[3, ])
+```
+
+```{r}
+peaks_df <- qtl2shiny::read_peaks(projects_df[3, ], "clinical")
+table(peaks_df$addcovar)
+```
+
+```{r}
+print(projects_df[4, "project"])
+qtl2shiny::create_peak_class(projects_df[4, ])
+```
+
+```{r}
+peaks_df <- qtl2shiny::read_peaks(projects_df[4, ], "Clinical")
+table(peaks_df$addcovar)
+```
+
+Note that `peaks` class names for `DO1200` do not always match the `pheno`
+class names.
+
+- `pheno "liver_splice_juncs"` has `peaks "liver_psi"`
+- `pheno "plasma_metabolites"` has `peaks "plasma_metabolites_13C"` or `"plasma_metabolites_2H"`
+
+Use the argument `subject_covar` to `read_peaks()`
+to get the file within `peaks` folder.
+
+```{r}
+print(projects_df[2, "project"])
+dim(qtl2shiny::read_peaks(projects_df[2, ], "plasma_metabolites_13C"))
+```
+
+which is the same `peaks` data as
+
+```{r}
+dim(qtl2shiny::read_peaks(projects_df[2, ], "plasma_metabolites",
+                          subject_covar = "all_mice_additive"))
+```
+
+Here are two other `peaks` tables with different `subjects`
+and/or `covar` models.
+
+```{r}
+dim(qtl2shiny::read_peaks(projects_df[2, ], "plasma_metabolites",
+                          subject_covar = "HC_mice_additive"))
+```
+
+```{r}
+dim(qtl2shiny::read_peaks(projects_df[2, ], "plasma_metabolites",
+                          subject_covar = "all_mice_sex_interactive"))
+```
+
+The legacy data have `"all_mice_additive".
+
+```{r}
+print(projects_df[1, "project"])
+dim(qtl2shiny::read_peaks(projects_df[1, ], "group"))
+```
+
+```{r}
+print(projects_df[3, "project"])
+dim(qtl2shiny::read_peaks(projects_df[3, ], "clinical"))
+```
+
+```{r}
+print(projects_df[4, "project"])
+dim(qtl2shiny::read_peaks(projects_df[4, ], "Clinical"))
+```
+
+## Refactor old Covar Data
+
+The new `covar` had `rownames` that are `Mouse` IDs and are data frames
+
+```{r}
+print(projects_df[2, "project"])
+covar <- qtl2shiny:::read_project(projects_df[2, ], "covar")
+print(class(covar))
+print(dim(covar))
+print(names(covar))
+head(rownames(covar))
+```
+
+Covar was messed up as well for `AttieDOv2. Fixed below
+
+```{r}
+print(projects_df[3, "project"])
+covar <- qtl2shiny:::read_project(projects_df[3, ], "covar")
+if (!any(stringr::str_detect(rownames(out), "^DO"))) {
+  rownames(covar) <- paste0("DO", stringr::str_pad(rownames(covar), 3, pad = "0"))
+  saveRDS(covar, paste0(paste(rev(projects_df[3, ]), collapse = "/"), "/covar.rds"))
+}
+```
+
+```{r}
+print(projects_df[1, "project"])
+covar <- qtl2shiny:::read_project(projects_df[1, ], "covar")
+print(class(covar))
+print(dim(covar))
+print(names(covar))
+head(rownames(covar))
+```
+
+```{r}
+print(projects_df[3, "project"])
+covar <- qtl2shiny:::read_project(projects_df[3, ], "covar")
+print(class(covar))
+print(dim(covar))
+print(names(covar))
+head(rownames(covar))
+```
+
+```{r}
+print(projects_df[4, "project"])
+covar <- qtl2shiny:::read_project(projects_df[4, ], "covar")
+print(class(covar))
+print(dim(covar))
+print(names(covar))
+head(rownames(covar))
+```
+
+## Pheno Data
+
+Note there is a `columns` argument in `read_pheno()` to select subset of columns.
+Before all data were in one large `pheno_data` file.
+New data has separate files by phenotype class.
+
+** The new phenotype datafiles are data frames with the subject (`"Mouse"`)
+identifier in the first column.
+The `qtl2` routines assume a phenotype matrix with subject as `rownames`.
+**
+
+For simplicity I duplicated the `pheno_data.rds` files for AttieDOv2 and Recla, giving then class names `pheno_clinical.rds`
+and `pheno_group.rds`, resp.
+
+```{r}
+print(projects_df[2, "project"])
+pheno <- qtl2shiny:::read_pheno(projects_df[2, ], "clinical_traits")
+print(class(pheno))
+print(dim(pheno))
+print(head(colnames(pheno)))
+head(rownames(pheno))
+```
+
+```{r}
+print(projects_df[1, "project"])
+pheno <- qtl2shiny:::read_pheno(projects_df[1, ], "group")
+print(class(pheno))
+print(dim(pheno))
+print(head(colnames(pheno)))
+head(rownames(pheno))
+```
+
+```{r}
+print(projects_df[3, "project"])
+pheno <- qtl2shiny:::read_pheno(projects_df[3, ], "clinical")
+print(class(pheno))
+print(dim(pheno))
+print(head(colnames(pheno)))
+head(rownames(pheno))
+```
+
+```{r}
+print(projects_df[4, "project"])
+pheno <- qtl2shiny:::read_pheno(projects_df[4, ], "Clinical")
+print(class(pheno))
+print(dim(pheno))
+print(head(colnames(pheno)))
+head(rownames(pheno))
+```
+
+### Refactor old Pheno Data
+
+```{r}
+class_name <- "plasma_metabolites_13C"
+dim(qtl2shiny:::read_pheno(projects_df[2, ], class_name))
+```
+
+```{r}
+dim(qtl2shiny:::read_pheno(projects_df[1, ], "group"))
+```
+
+```{r}
+dim(qtl2shiny:::read_pheno(projects_df[3, ], "clinical"))
+```
+
+### Special case of old `AttieDO` data
+
+For AttieDO, there are many more traits, in five classes.
+Need to divide them out using the `analyses` object
+because the peaks files do not have all we need.
+Further, the mouse IDs are the rownames, but they were messed up
+in the `pheno_data`. The `AttieDO` only uses numbers, but they should be
+of the form `DOnnn`. Could change that but will need to change phenos
+and covars, and maybe other files. Probably not worth it on old data.
+Salvage below drops all rows that have all missing data.
+Turns out Islet data as `DOnnn` format.
+
+```{r}
+dim(AttieDO_pheno <- qtl2shiny:::read_pheno(projects_df[4, ], "data",
+                                            legacy = TRUE))
+```
+
+```{r}
+analyses <- qtl2shiny:::read_project(projects_df[4, ], "analyses", legacy = TRUE)
+(classes <- unique(analyses$pheno_group))
+```
+
+```{r}
+for (i in classes) {
+  print(i)
+  filename <- paste0(paste(rev(projects_df[4, ]), collapse = "/"), "/pheno_",
+                     i, ".rds")
+  if (file.exists(filename)) {
+    message("filename exists: ", filename)
+  } else {
+    pheno_names <- dplyr::filter(analyses, pheno_group == i)$pheno
+    out <- AttieDO_pheno[, pheno_names]
+    rownames(out) <- rownames(AttieDO_pheno)
+    badrows <- apply(out, 1, function(x) all(is.na(x)))
+    out <- out[!badrows, ]
+    if (!any(stringr::str_detect(rownames(out), "^DO"))) {
+      rownames(out) <- paste0("DO", stringr::str_pad(rownames(out), 3, pad = "0"))
+    }
+    print(head(rownames(out)))
+    saveRDS(out, filename)
+  }
+}
+```
+
+Verify that `rownames` have format `DOnnn`.
+
+```{r}
+for (i in classes) {
+  print(i)
+  tmp <- qtl2shiny:::read_pheno(projects_df[4, ], i)
+  print(dim(tmp))
+  print(sum(!stringr::str_detect(rownames(tmp), "^DO")))
+}
+```
+
+```{r eval=FALSE}
+for(proji in c(1,3,4)) {
+  print(projects_df[proji,]$project)
+  project_path <- paste(rev(projects_df[proji,]), collapse = "/")
+  phenos <- dir(file.path(project_path, "pheno"), pattern = "pheno_.*")
+  for(i in phenos) {
+    print(i)
+    phenoi <- readRDS(file.path(project_path, "pheno", i))
+    if(!is.matrix(phenoi)){
+      if(!tibble::has_rownames(phenoi))
+        phenoi <- tibble::column_to_rownames(phenoi, var = names(phenoi)[1])
+      types <- sapply(phenoi, class)
+      if(!all(types == "numeric")) {
+        for(j in which(types != "numeric"))
+          phenoi[[j]] <- as.numeric(phenoi[[j]])
+      }
+      phenoi <- as.matrix(phenoi)
+      saveRDS(phenoi, file.path(project_path, "pheno", i))
+    }
+  }
+}
+```
+
+### Fix transform
+
+Phenotypes are in raw units.
+Attie lab analysis uses 
+
+- rankZ original code:
+<https://rdrr.io/bioc/DOQTL/src/R/rankZ.R>
+- nqrank original file
+<https://github.com/kbroman/qtl/blob/main/R/util.R>
+ 
+Note that this version of `rankZ` uses
+y = rank(x) / (n + 1)
+The nqrank uses
+y = rank(x – 0.5) / n
+They are similar, and both avoid ends of distribution when calculating normal scores
+stats::qnorm(y)
+ 
+The `nqrank` sets mean and variance to that of the data, while rankz sets mean and variance to 0 and 1 (i.e. standardizes).
+
+```{r}
+pheno <- qtl2shiny:::read_pheno(projects_df[2, ], "clinical_traits")
+dim(pheno)
+means <- sapply(pheno[,-1], mean, na.rm = TRUE)
+summary(means)
+sds <- sapply(pheno[,-1], sd, na.rm = TRUE)
+summary(sds)
+skews <- sapply(pheno[,-1], GGally:::skewness)
+summary(skews)
+```
+
+Problem with liver lipids?
+
+```{r}
+pheno <- qtl2shiny:::read_pheno(projects_df[2, ], "liver_lipids")
+dim(pheno)
+means <- sapply(pheno[,-1], mean, na.rm = TRUE)
+summary(means)
+sds <- sapply(pheno[,-1], sd, na.rm = TRUE)
+summary(sds)
+cls <- sapply(pheno[,-1], base::class)
+tmp <- pheno[,410]
+```
+
+### Fix Mouse ID column.
+
+Now convert these old `pheno` files into data frames with
+the first column being "Mouse", derived from the `rownames` 
+
+```{r eval=FALSE}
+i <- 1
+#for(i in c(1,3,4)) {}
+(classes <- qtl2shiny::project_classes(projects_df[i,]))
+for(class in classes) {
+  print(class)
+  pheno <- qtl2shiny::read_pheno(projects_df[i,], class)
+  print(class(pheno))
+  print(dim(pheno))
+  print(colnames(pheno)[1:5])
+    if(!("Mouse" %in% colnames(pheno))) {
+    pheno <- dplyr::select(
+      tibble::rownames_to_column(as.data.frame(pheno), "Mouse"),
+      "Mouse", dplyr::everything())
+    print(colnames(pheno)[1:5])
+    print(class(pheno))
+    print(dim(pheno))
+  }
+}
+```
+
+Kinship is OK.
+
+```{r}
+kinship <- qtl2shiny:::read_project(projects_df[2, ], "kinship")
+head(rownames(kinship[[1]]))
+```
+
+Find names of classes
+
+```{r}
+for (i in 1:4) {
+  cat(projects_df[i, "project"], ": ")
+  cat(paste(qtl2shiny::project_classes(projects_df[i, ]), collapse = ", "))
+  cat("\n")
+}
+```
+
+## Transition Challenges
+
+Note change of column names for peaks, as well as getting class
+from file within the `peaks` folder.
+
+No longer should need `analyses` table.
+This will require rewrite in multiple places.
+
+- `pheno_read` replaced by `read_project`, which requires knowing the `phenotype_class`.
+
+## Reading multiple phenotype classes.
+
+Peaks and phenotypes are now broken down by phenotype class as
+`peak/<project>_<class>_*.rds` or `pheno_<class>.rds`.
+Want to be able to combine measurements across classes.
+Note also that phenotypes may be subset by `columns` within a `class`, but this only makes sense if selecting one class in most cases.
+
+```{r}
+qtl2shiny::project_classes(projects_df[2, ])
+```
+
+```{r}
+tmp <- qtl2shiny::read_project(projects_df[2, ], "peaks", class = "clinical_traits")
+```
+
+```{r}
+tmp <- qtl2shiny::read_project(projects_df[2, ], "pheno",                               
+                               class = "clinical_traits")
+```
+
+```{r}
+mpeaks <- qtl2shiny:::read_project(projects_df[3,], "peaks",
+  class = "Clinical_all_mice_additive")
+```
+
+## Scan with Covariates
+
+The
+[scanServer](https://github.com/byandell-sysgen/qtl2shiny/blob/refactor/R/scanServer.R)
+performs the scans.
+For convenience and simplified reuse of key scan and coefficient objects,
+we wrap
+[qtl2::scan1](https://kbroman.org/qtl2/assets/vignettes/user_guide.html)
+within
+[scan1covar](https://github.com/byandell-sysgen/qtl2shiny/blob/refactor/R/scan1covar.R).
+There are several routines here that are being deprecated as I remove
+reliance on `analyses_df` and explicit `sex` as interactive covar.
+Future use involves the `addcovar` and `intcovar` columns of `peak_df`.
+
+- covar_matrix
+- which_covar
+- sexcovar
+
+These are called in
+
+- R/allele_scan.R
+- R/scan1_effect.R
+- R/scan1_pattern.R
+- R/snpSetupServer.R
+
