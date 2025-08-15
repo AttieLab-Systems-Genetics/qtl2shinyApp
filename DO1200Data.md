@@ -145,7 +145,8 @@ with files in the `DO1200` folder organized as follows
     ├── probs_fst/ or genoprob/             # genoprobs in `qtl2fst` format
     ├── covar.rds                           # covariate data frame
     ├── kinship_loco.rds                    # kinship object (list)
-    └── pmap.rds                            # physical map object (list)
+    ├── pmap.rds                            # physical map object (list)
+    └── misc/                               # miscellaneous file folder
 
 ### Miscellaneous Items from Cross Object
 
