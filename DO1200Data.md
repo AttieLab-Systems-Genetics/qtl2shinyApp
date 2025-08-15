@@ -1,10 +1,10 @@
+# DO1200 Managed Data and Code
+
     rd_dir <- "/Volumes/mkeller3/General/main_directory/mapping_data"
 
 This document concerns local data structures for the `DO1200` data
 project conducted in the [AttieLab Systems
 Genetics](https://github.com/AttieLab-Systems-Genetics) organization.
-
-## DO1200 Managed Data and Code
 
 The data are maintained on the [UW-Madison
 ResearchDrive](https://it.wisc.edu/services/researchdrive/) in the
