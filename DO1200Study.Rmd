@@ -27,7 +27,7 @@ and streamline code. Goal:
 - mediate using mRNA data (not done yet)
 
 ```{r}
-(project_info <- data.frame(project = "DO1200",
+(project_df <- data.frame(project = "DO1200",
                            taxa = "CCmouse",
                            directory = "qtl2shinyData"))
 ```
@@ -36,46 +36,40 @@ and streamline code. Goal:
 
 
 ```{r}
-project <- project_info$project
-project_path <- paste(rev(project_info), collapse = "/")
-window_Mbp <- 1
+project <- project_df$project
+project_path <- paste(rev(project_df), collapse = "/")
 ```
 
 ```{r}
-class_name <- "plasma_metabolites_13C"
+class_name <- "plasma_metabolites"
+key_trait <- "AUC_ARG"
 ```
 
 Phenotype classes in current DO1200 database.
 
 ```{r}
-phenotype_class <- c("clinical_traits", "liver_genes", "liver_isoforms",
-                     "liver_lipids", "liver_psi", "liver_splice_juncs",
-                     "plasma_metabolites", "plasma_metabolites", 
-                     "plasma_metabolites_13C", "plasma_metabolites_2H")
+qtl2shiny::project_classes(project_df)
 ```
 
 ```{r}
-peaks <- qtl2shiny::read_peak_class(project_info, class_name)
-```
-
-```{r}
-(peaks_df <- peaks |>
-  dplyr::filter(grepl("AUC_ARG", phenotype))) |>
+(peaks_df <- qtl2shiny::read_peaks(project_df, class_name) |>
+  dplyr::filter(grepl(key_trait, phenotype))) |>
   dplyr::select(phenotype, qtl_lod, qtl_chr, qtl_pos)
 ```
+
 ```{r}
-pheno_metab <- qtl2shiny:::read_project(project_info,
-                                       paste0("pheno_", class_name))
+pheno_mx <- qtl2shiny:::read_pheno(project_df, class_name)
+pheno_names <- colnames(pheno_mx)[grep(key_trait, colnames(pheno_mx))]
+pheno_mx <- pheno_mx[, pheno_names, drop = FALSE]
+pheno_mx <- apply(pheno_mx, 2, qtl2shiny:::rankZ)
+colnames(pheno_mx)
 ```
 
 ```{r}
-(pheno_names <- names(pheno_metab)[grep("AUC_ARG", names(pheno_metab))])
-```
-
-```{r}
-pheno_metab <- qtl2shiny:::read_project(project_info,
-                                       paste0("pheno_", class_name),
-                                       c("Mouse", pheno_names))
+signif(
+  data.frame(mean = apply(pheno_mx, 2, mean, na.rm = TRUE),
+             sd = apply(pheno_mx, 2, sd, na.rm = TRUE)),
+  4)
 ```
 
 ```{r}
@@ -88,17 +82,13 @@ window_Mbp <- 2
 ```
 
 ```{r}
-phe_mx <- pheno_metab[,grep(pheno_name, colnames(pheno_metab)), drop = FALSE]
-rownames(phe_mx) <- pheno_metab$Mouse
-covar <- qtl2shiny:::read_project(project_info, "covar")
-K_chr <- qtl2shiny:::read_project(project_info, "kinship_local")[chr_id]
+#** Newer version of covar available, and problem with DOgen column.
+#** New version has Mouse column.
+covar_df <- qtl2shiny:::read_project(project_df, "covar")
+covar_df$DOgen <- as.character(covar_df$DOgen)
+K_chr <- qtl2shiny:::read_project(project_df, "kinship")[chr_id]
 # Following used for mediation.
-pmap_obj <- qtl2shiny:::read_project(project_info, "pmap")
-```
-
-```{r}
-arg_mx <- pheno_metab[,match(pheno_names, colnames(pheno_metab)), drop = FALSE]
-rownames(arg_mx) <- pheno_metab$Mouse
+pmap_obj <- qtl2shiny:::read_project(project_df, "pmap")
 ```
 
 ## Haplotype Server
@@ -115,7 +105,7 @@ sex_type <- "A"
 start_val <- peak_Mbp - window_Mbp
 end_val <- peak_Mbp + window_Mbp
 # Define query_probs function
-query_probs <- qtl2shiny:::read_query_rds(project_info, "query_probs.rds")
+query_probs <- qtl2shiny:::read_query_rds(project_df, "query_probs.rds")
 # Note probs object keeps map with it
 probs_obj <- query_probs(chr_id, start_val, end_val)
 ```
@@ -130,51 +120,24 @@ dplyr::select(peaks_df, phenotype, addcovar, intcovar)
 ```
 
 ```{r}
-peaks_covar <- function(covform, cov_df) {
-  if(covform == "none") return(NULL)
-  stats::model.matrix(formula(covform), cov_df)[,-1, drop = FALSE]
-}
-scan1covar <- function(pheno, genoprobs, kinship, cov_df, peaks_df, 
-                       model = "normal", ...) {
-  addcovar <- peaks_covar(peaks_df$addcovar, cov_df)
-  intcovar <- peaks_covar(peaks_df$intcovar, cov_df)
-  kinship <- if(model == "binary") NULL else kinship
-  scans <- qtl2::scan1(genoprobs, pheno, kinship,
-                       addcovar, intcovar = intcovar, model = "normal")
-  attr(scans, "hsq") <- NULL
-  # reorder by decreasing max lod
-  qtl2shiny:::modify_object(scans, scans[,order(-apply(scans,2,max)), drop=FALSE])
-}
-```
-
-```{r}
-scan_obj <- scan1covar(phe_mx, probs_obj$probs, K_chr, covar, peaks_df)
-```
-
-```{r}
-scan_arg <- scan1covar(arg_mx, probs_obj$probs, K_chr, covar, peaks_df)
+scan_obj <- qtl2shiny::scan1covar(pheno_mx, covar_df, probs_obj$probs, K_chr, peaks_df)
 ```
 
 ```{r}
 scan_window <- c(start_val, end_val)
 qtl2shiny:::plot_scan(scan_obj, probs_obj$map, seq(ncol(scan_obj)), chr_id, 
-                      scan_window, phe_mx)
+                      scan_window, pheno_mx)
 ```
 
 ```{r}
-qtl2shiny:::plot_scan(scan_arg, probs_obj$map, seq(ncol(scan_arg)), chr_id, 
-                      scan_window, arg_mx)
-```
-
-```{r}
-addcovar <- peaks_covar(peaks_df$addcovar, covar)
-allele_info <- qtl2shiny:::read_project(project_info, "allele_info")
+addcovar <- qtl2shiny:::covar_model_matrix(peaks_df$addcovar, covar_df)[[1]]
+allele_info <- qtl2shiny::read_project(project_df, "allele_info")
 haplos <- allele_info$code
 ```
 
 ```{r}
 blups <- FALSE
-eff_obj <- qtl2ggplot::listof_scan1coef(probs_obj$probs, phe_mx, K_chr,
+eff_obj <- qtl2ggplot::listof_scan1coef(probs_obj$probs, pheno_mx, K_chr,
                                         addcovar, blups)
 qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
                  addlod = TRUE, allele_info)
@@ -183,9 +146,9 @@ qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
 ```{r eval=FALSE}
 blups <- TRUE
 addcovar <- peaks_covar(peaks_df$addcovar, covar)
-eff_obj <- qtl2ggplot::listof_scan1coef(probs_obj$probs, phe_mx, K_chr,
+eff_obj <- qtl2ggplot::listof_scan1coef(probs_obj$probs, pheno_mx, K_chr,
                                         addcovar, blups)
-allele_info <- qtl2shiny:::read_project(project_info, "allele_info")
+allele_info <- qtl2shiny:::read_project(project_df, "allele_info")
 qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
                  addlod = TRUE, allele_info)
 ```
@@ -193,11 +156,72 @@ qtl2shiny:::plot_eff(pheno_name, eff_obj, probs_obj$map, scan_obj, scan_window,
 ```{r}
 blups <- FALSE
 eff_arg1 <- qtl2ggplot::listof_scan1coef(probs_obj$probs,
-                                         arg_mx[,1, drop=FALSE], K_chr,
+                                         pheno_mx[,1, drop=FALSE], K_chr,
                                          addcovar, blups)
-qtl2shiny:::plot_eff(pheno_names[1], eff_arg1, probs_obj$map, scan_arg, scan_window,
+qtl2shiny:::plot_eff(pheno_names[1], eff_arg1, probs_obj$map, scan_obj, scan_window,
                  addlod = TRUE, allele_info)
 ```
+
+## Lipid Hotspot
+
+Look at liver_lipids that map to the same place.
+Is the signature the same?
+Look at additive and diet_interactive hotspots.
+
+```{r}
+lipid_df <- qtl2shiny::read_peaks(project_df, "liver_lipids")
+lipid_hotspot <- subset(qtl2shiny::hotspot(pmap_obj, lipid_df), chr = "18")
+```
+
+```{r}
+lipid_diet_df <- qtl2shiny::read_peaks(project_df, "liver_lipids",
+  subject_model = "all_mice_diet_interactive")
+lipid_diet_hotspot <- subset(qtl2shiny::hotspot(pmap_obj, lipid_diet_df),
+                             chr = "18")
+```
+
+```{r}
+lipids_hot <- cbind(lipid_hotspot, lipid_diet_hotspot,
+                    scannames = c("all", "lipid_add", "lipid_diet"))
+```
+
+```{r}
+qtl2shiny:::plot_hot(lipids_hot, class = 2:3)
+```
+
+### Harvest Liver Lipid Phenotypes
+
+```{r}
+lipid_diet_df <- qtl2shiny:::peaks_in_pos(lipid_diet_df, TRUE,
+                   chr_id, peak_Mbp, window_Mbp)
+```
+
+```{r}
+dplyr::count(lipid_diet_df, addcovar, intcovar)
+```
+
+```{r}
+lipid_names <- lipid_diet_df$phenotype
+pheno_lipid <- qtl2shiny::read_pheno(project_df, "liver_lipids",
+                                     columns = lipid_names)
+```
+
+```{r}
+scan_lipid_obj <- qtl2shiny::scan1covar(pheno_lipid, covar_df, probs_obj$probs,
+                                        K_chr, lipid_diet_df)
+```
+
+```{r}
+saveRDS(scan_lipid_obj, "scan_lipid_obj.rds")
+```
+
+```{r}
+qtl2shiny:::plot_scan(scan_lipid_obj, probs_obj$map, seq(ncol(scan_lipid_obj)),
+                      chr_id, 
+                      scan_window, pheno_lipid) +
+  ggplot2::theme(legend.position = "none")
+```
+
 ### SNP Association and SDP Plots
 
 Note that the `query_probs()` function is set up to read genotype probabilities
@@ -218,7 +242,7 @@ snpprobs_obj <- query_probs(chr_id, peak_Mbp - window_Mbp,
                             peak_Mbp + window_Mbp, allele = "snp")
       
       # define the query_variants function
-query_variants <- qtl2shiny:::read_query_rds(project_info, "query_variants.rds")
+query_variants <- qtl2shiny:::read_query_rds(project_df, "query_variants.rds")
 snpinfo <- query_variants(chr_id, peak_Mbp - window_Mbp,
                           peak_Mbp + window_Mbp)
 ## **Need to change this**
@@ -229,7 +253,7 @@ snpprobs_obj <- qtl2mediate::get_snpprobs(chr_id, peak_Mbp, window_Mbp,
 ```{r}
 snp_action <- "basic"
 snpprobs_act <- qtl2pattern::snpprob_collapse(snpprobs_obj$snpprobs, snp_action)
-snp_scan_obj <- scan_obj <- scan1covar(phe_mx, snpprobs_act, K_chr, covar, peaks_df)
+snp_scan_obj <- qtl2shiny::scan1covar(pheno_mx, covar_df, snpprobs_act, K_chr, peaks_df)
 ```
 
 ```{r}
@@ -268,7 +292,11 @@ knitr::kable(
 #### ARG1
 
 ```{r}
-snp_scan_arg1 <- scan_obj <- scan1covar(arg_mx[,1, drop=FALSE], snpprobs_act, K_chr, covar, peaks_df)
+snp_scan_arg1 <- 
+  subset(
+    qtl2shiny::scan1covar(pheno_mx[,c(1,4), drop=FALSE], covar_df,
+                          snpprobs_act, K_chr, peaks_df),
+    lodcolumn = 2)
 ```
 
 ```{r}
@@ -356,8 +384,8 @@ snpPairProbs_obj <- qtl2mediate::get_snpprobs(chr_id, peak_Mbp, window_Mbp,
 ```
 
 ```{r}
-target <- phe_mx
-mediator <- arg_mx[,-4]
+target <- pheno_mx[,4, drop = FALSE]
+mediator <- pheno_mx[,-4]
 # Need to get SNP that is in top_snps_tbl
 snp_id <- rownames(max(snp_scan_obj, snpPairProbs_obj$snpinfo))
 driver <- snpPairProbs_obj$snpprobs[[chr_id]][,,snp_id]
@@ -429,13 +457,13 @@ at each marker loci.
 This is only set up for one phenotype (?) and additive covariates only.
 
 ```{r}
-pats <- qtl2shiny:::pull_patterns(patterns, colnames(phe_mx))
+pats <- qtl2shiny:::pull_patterns(patterns, colnames(pheno_mx))
 pattern <- pats$pattern[1]
 ```
 
 ```{r}
 scan_pat <- qtl2pattern::scan1pattern(pairprobs_obj$probs,
-                            phe_mx,
+                            pheno_mx,
                             K_chr, addcovar,
                             pairprobs_obj$map,
                             pats,
@@ -454,7 +482,7 @@ dim(pairprobs_all$probs)
 
 ```{r}
 scan_pat_all <- qtl2pattern::scan1pattern(pairprobs_all$probs,
-                            phe_mx,
+                            pheno_mx,
                             K_chr, addcovar,
                             pairprobs_all$map,
                             pats,
@@ -487,7 +515,7 @@ Assume comediator rather than expression.
 ```{r}
 comediator_region <- function(pheno_name, chr_id, scan_window, 
                               covar, peaks, 
-                              qtls = 2, pmap, pheno_metab) {
+                              qtls = 2, pmap, pheno_mx) {
   peaks_not <- dplyr::filter(peaks, .data$phenotype != pheno_name)
   # Filter peaks and analyses to region and drop pheno_name
   peaks_local <- dplyr::filter(peaks_not,
@@ -496,11 +524,11 @@ comediator_region <- function(pheno_name, chr_id, scan_window,
                                .data$qtl_pos <= scan_window[2])
   # Read the phenos we need.
   phenos <- peaks_local$phenotype
-  pheno_metab_local <- pheno_metab[, phenos, drop = FALSE]
+  pheno_mx_local <- pheno_mx[, phenos, drop = FALSE]
 
   # Create comediator object.
   out <- pheno_region(chr_id, scan_window, covar, pmap,
-    peaks, pheno_metab_local, drivers = qtls)
+    peaks, pheno_mx_local, drivers = qtls)
   
   out
 }
@@ -587,13 +615,13 @@ pheno_region <- function(chr_id, scan_window, covar, map,
 
 ```{r}
 comed_ls <- comediator_region(pheno_name, chr_id, scan_window,
-  covar, peaks, qtls, pmap_obj, pheno_metab)
+  covar, peaks, qtls, pmap_obj, pheno_mx)
 med_ls <- qtl2mediate::comediator_type(comed_ls, peaks, pheno_name, other)
 ```
 
 ```{r}
-phe1_mx <- if(pheno_name %in% colnames(phe_mx)) {
-    phe_mx[, pheno_name, drop = FALSE]
+phe1_mx <- if(pheno_name %in% colnames(pheno_mx)) {
+    pheno_mx[, pheno_name, drop = FALSE]
   } else {
     NULL
   }
@@ -633,7 +661,7 @@ med_name <- choices_med[1]
 
 ```{r}
 scat_dat <- qtl2mediate::mediation_triad_qtl2(
-      target = phe_mx,
+      target = pheno_mx,
       mediator = med_ls[[1]][, med_name, drop = FALSE],
       annotation = med_ls[[2]],
       covar_tar = cov_df,
@@ -658,7 +686,7 @@ scat_plot <- "by_mediator"
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "sdp",
              centerline = NULL)
 ```
@@ -667,7 +695,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "sdp-parallel",
              centerline = NULL)
 ```
@@ -676,7 +704,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "parallel",
              centerline = NULL)
 ```
@@ -685,7 +713,7 @@ ggplot2::autoplot(scat_dat, type = scat_plot,
 ggplot2::autoplot(scat_dat, type = scat_plot,
              dname = peak_mar,
              mname = med_name,
-             tname = colnames(phe_mx),
+             tname = colnames(pheno_mx),
              fitlines = "driver",
              centerline = NULL)
 ```

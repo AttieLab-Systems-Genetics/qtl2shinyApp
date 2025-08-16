@@ -5,8 +5,19 @@ QTL2 Shiny App Operations
 This repo has building blocks for operational QTL2 Shiny App
 constructed with
 [qtl2shiny](https://github.com/byandell-sysgen/qtl2shiny).
-The instance will have a folder `qtl2shinyData` that is **not**
+The instance will have a subfolder `qtl2shinyData` that is **not**
 synced with GitHub.
+
+This is motivited by work on the Attie DO1200 project.
+See
+
+- [DO1200Data.md](https://github.com/byandell-sysgen/qtl2shinyApp/blob/main/DO1200Data.md):
+DO1200 Managed Data and Code (source
+[DO1200Data.Rmd](https://github.com/byandell-sysgen/qtl2shinyApp/blob/main/DO1200Data.Rmd))
+- [DO1200Study.Rmd](https://github.com/byandell-sysgen/qtl2shinyApp/blob/main/DO1200Study.md):
+study of DO1200 data
+- [transition.Rmd](https://github.com/byandell-sysgen/qtl2shinyApp/blob/main/transition.md):
+transition from old `qtl2shiny` data format to current
 
 In addition to these issues, the modular design of the shiny modules
 needs to be refactored.
